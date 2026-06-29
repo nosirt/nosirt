@@ -241,9 +241,15 @@
 </div>
 
 <div id="page-wireless" class="page">
-  <div class="page-inner">
+  <div class="page-inner wp-page-inner">
     <div class="page-title">the wireless</div>
     <div class="page-sub">tune in</div>
+
+    <div class="wp-header-controls">
+      <button class="wp-mode-label" id="wp-mode-toggle" onclick="toggleWaveVideo()" title="Toggle between waveform and video view">
+        <span class="wp-mode-icon">🌊</span> <span class="wp-mode-text">waveform</span>
+      </button>
+    </div>
 
     <div id="wp-stage" class="wp-stage mode-wave">
       <div id="wp-placeholder" class="wp-placeholder">pick an episode below to begin →</div>
@@ -262,7 +268,6 @@
           <button class="wp-btn" id="wp-back" aria-label="back 10 seconds">⟲<span class="wp-btn-sub">10</span></button>
           <button class="wp-btn wp-btn-main" id="wp-playpause" aria-label="play or pause">▶</button>
           <button class="wp-btn" id="wp-fwd" aria-label="forward 10 seconds"><span class="wp-btn-sub">10</span>⟳</button>
-          <button class="wp-btn wp-mode-toggle" id="wp-mode-toggle" onclick="toggleWaveVideo()" aria-label="toggle video view">🎥</button>
         </div>
       </div>
     </div>
@@ -318,6 +323,21 @@
   <div class="popup-name">nosirt</div>
   <div class="popup-bio">collector of strange things and quiet moments. this is my corner of the internet. wander freely.</div>
   <a href="https://instagram.com/nosirt" target="_blank" class="popup-insta"><span>📷</span> @nosirt on instagram</a>
+  
+  <div id="admin-panel" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid rgba(200,137,42,.2);">
+    <div id="admin-locked">
+      <div style="font-size:.75rem;color:var(--fog);margin-bottom:6px;">admin mode</div>
+      <div style="display:flex;gap:6px;">
+        <input class="sq-input" id="admin-pw-input" type="password" placeholder="password..." style="margin:0;flex:1;font-size:.8rem;padding:6px 8px;height:28px;">
+        <button class="sq-submit" onclick="tryAdminUnlock()" style="width:auto;padding:6px 10px;font-size:.75rem;">unlock</button>
+      </div>
+      <div id="admin-wrong" style="font-size:.65rem;color:#c85a5a;margin-top:2px;font-family:'IM Fell English',serif;font-style:italic;"></div>
+    </div>
+    <div id="admin-unlocked" style="display:none;">
+      <div style="font-size:.75rem;color:var(--amber);margin-bottom:8px;">🔓 admin unlocked</div>
+      <button class="sq-submit" onclick="lockAdmin()" style="width:100%;padding:6px;font-size:.75rem;">lock admin</button>
+    </div>
+  </div>
 </div>
 
 <div id="float-note" onclick="openStoneNote()">📜</div>
@@ -352,12 +372,46 @@
     <!-- Shelf tabs -->
     <div style="display:flex;gap:6px;padding:10px 18px 8px;overflow-x:auto;scrollbar-width:none;flex-shrink:0;border-bottom:1px solid rgba(200,137,42,.1)">
       <div class="shelf-tab active" onclick="switchShelf('novels')" style="flex-shrink:0;padding:5px 12px;border-radius:16px;border:1px solid rgba(200,137,42,.35);background:rgba(200,137,42,.15);color:var(--cream);font-family:'IM Fell English',serif;font-style:italic;font-size:.75rem;cursor:pointer;white-space:nowrap">📖 novels</div>
-      <div class="shelf-tab" onclick="switchShelf('short')" style="flex-shrink:0;padding:5px 12px;border-radius:16px;border:1px solid rgba(200,137,42,.2);background:transparent;color:var(--fog);font-family:'IM Fell English',serif;font-style:italic;font-size:.75rem;cursor:pointer;white-space:nowrap">📜 short stories</div>
+      <div class="shelf-tab" onclick="switchShelf('stories')" style="flex-shrink:0;padding:5px 12px;border-radius:16px;border:1px solid rgba(200,137,42,.2);background:transparent;color:var(--fog);font-family:'IM Fell English',serif;font-style:italic;font-size:.75rem;cursor:pointer;white-space:nowrap">📜 stories</div>
       <div class="shelf-tab" onclick="switchShelf('poetry')" style="flex-shrink:0;padding:5px 12px;border-radius:16px;border:1px solid rgba(200,137,42,.2);background:transparent;color:var(--fog);font-family:'IM Fell English',serif;font-style:italic;font-size:.75rem;cursor:pointer;white-space:nowrap">🪶 poetry</div>
       <div class="shelf-tab" onclick="switchShelf('other')" style="flex-shrink:0;padding:5px 12px;border-radius:16px;border:1px solid rgba(200,137,42,.2);background:transparent;color:var(--fog);font-family:'IM Fell English',serif;font-style:italic;font-size:.75rem;cursor:pointer;white-space:nowrap">✦ other</div>
     </div>
+    <!-- Search + add -->
+    <div style="display:flex;gap:8px;padding:10px 18px;flex-shrink:0">
+      <input class="sq-input" id="lib-search" placeholder="search title, author, or genre..." oninput="renderBookList()" style="margin:0;flex:1">
+      <button class="wp-add-toggle" onclick="toggleAddStory()">+ add</button>
+    </div>
+    <!-- Add story panel -->
+    <div id="lib-add-panel" style="display:none;margin:0 18px 12px;background:rgba(20,15,10,.55);border:1px solid rgba(200,137,42,.18);border-radius:12px;padding:12px;flex-shrink:0;max-height:50vh;overflow-y:auto">
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <select id="lib-shelf" class="sq-select" style="flex:1">
+          <option value="novels">📖 novel</option>
+          <option value="stories">📜 story</option>
+          <option value="poetry">🪶 poetry</option>
+          <option value="other">✦ other</option>
+        </select>
+        <select id="lib-status" class="sq-select" style="flex:1">
+          <option value="completed">completed</option>
+          <option value="ongoing">ongoing</option>
+        </select>
+      </div>
+      <input class="sq-input" id="lib-title" placeholder="title...">
+      <input class="sq-input" id="lib-author" placeholder="author name...">
+      <input class="sq-input" id="lib-genre" list="genre-suggestions" placeholder="genre (type anything — fantasy, horror, etc.)">
+      <datalist id="genre-suggestions">
+        <option value="Fantasy"><option value="Sci-Fi"><option value="Romance"><option value="Horror">
+        <option value="Mystery"><option value="Drama"><option value="Comedy"><option value="Adventure">
+        <option value="Historical Fiction"><option value="Poetry"><option value="Other">
+      </datalist>
+      <textarea class="sq-textarea" id="lib-desc" placeholder="short description (optional)" style="min-height:48px"></textarea>
+      <div style="font-size:.7rem;color:var(--fog);font-family:'IM Fell English',serif;font-style:italic;margin:8px 0 4px">upload a .docx or .pdf — chapters are detected automatically</div>
+      <input type="file" id="lib-file" accept=".docx,.pdf" style="width:100%;color:var(--fog);font-size:.78rem;margin-bottom:8px">
+      <div style="font-size:.7rem;color:var(--fog);font-family:'IM Fell English',serif;font-style:italic;margin:4px 0">— or paste the text directly —</div>
+      <textarea class="sq-textarea" id="lib-paste" placeholder="paste your story here. tip: start a line with 'Chapter 1: ...' to mark chapter breaks." style="min-height:90px"></textarea>
+      <button class="sq-submit" onclick="publishStory()">publish to the keep →</button>
+    </div>
     <!-- Book list -->
-    <div id="book-list" style="flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:12px">
+    <div id="book-list" style="flex:1;overflow-y:auto;padding:0 18px 16px;display:flex;flex-direction:column;gap:12px">
       <!-- populated by JS -->
     </div>
   </div>
@@ -369,9 +423,18 @@
       <button onclick="closeReader()" style="background:transparent;border:none;color:var(--amber);font-family:'IM Fell English',serif;font-style:italic;font-size:.8rem;cursor:pointer;flex-shrink:0">← library</button>
       <div style="flex:1;overflow:hidden">
         <div id="reader-title" style="font-family:'Cinzel Decorative',serif;font-size:.82rem;color:var(--cream);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
-        <div id="reader-chapter-label" style="font-family:'IM Fell English',serif;font-style:italic;font-size:.7rem;color:var(--amber);opacity:.7;margin-top:1px"></div>
+        <div id="reader-meta" style="font-family:'IM Fell English',serif;font-style:italic;font-size:.7rem;color:var(--amber);opacity:.7;margin-top:1px"></div>
       </div>
+      <button id="reader-add-ch-btn" onclick="toggleAddChapter()" style="display:none;background:rgba(200,137,42,.1);border:1px solid rgba(200,137,42,.2);border-radius:8px;padding:5px 9px;color:var(--fog);font-size:.7rem;cursor:pointer;flex-shrink:0;font-family:'IM Fell English',serif;font-style:italic">+ chapter</button>
       <button onclick="toggleChapterNav()" style="background:rgba(200,137,42,.1);border:1px solid rgba(200,137,42,.2);border-radius:8px;padding:5px 10px;color:var(--fog);font-size:.75rem;cursor:pointer;flex-shrink:0">≡</button>
+    </div>
+    <!-- Add chapter panel -->
+    <div id="lib-add-chapter-panel" style="display:none;background:rgba(20,15,10,.7);border-bottom:1px solid rgba(200,137,42,.15);padding:12px 16px;flex-shrink:0;max-height:45vh;overflow-y:auto">
+      <input class="sq-input" id="ch-title" placeholder="chapter title (optional — auto-detected if left blank)">
+      <input type="file" id="ch-file" accept=".docx,.pdf" style="width:100%;color:var(--fog);font-size:.78rem;margin-bottom:8px">
+      <div style="font-size:.7rem;color:var(--fog);font-family:'IM Fell English',serif;font-style:italic;margin:4px 0">— or paste —</div>
+      <textarea class="sq-textarea" id="ch-paste" placeholder="paste the new chapter here..." style="min-height:70px"></textarea>
+      <button class="sq-submit" onclick="publishChapterToBook()">add to story →</button>
     </div>
     <!-- Chapter nav drawer -->
     <div id="chapter-nav" style="display:none;background:rgba(8,6,4,.95);border-bottom:1px solid rgba(200,137,42,.15);padding:10px 16px;flex-shrink:0;max-height:40vh;overflow-y:auto">
@@ -422,6 +485,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.youtube.com/iframe_api"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
 <!-- Site scripts — core.js MUST load first, the rest can be in any order -->
 <script src="core.js"></script>

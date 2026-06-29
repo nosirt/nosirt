@@ -174,12 +174,12 @@ button{touch-action:manipulation}
 #mood-back.visible{display:block;}
 
 /* BOTTOM NAV */
-#bottom-nav{position:absolute;bottom:0;left:0;right:0;z-index:40;padding:0 12px calc(18px + env(safe-area-inset-bottom));
-  background:linear-gradient(0deg,rgba(10,8,14,.95) 0%,transparent 100%);}
+#bottom-nav{position:fixed;bottom:0;left:0;right:0;z-index:40;padding:10px 12px calc(18px + env(safe-area-inset-bottom));
+  background:linear-gradient(0deg,rgba(10,8,6,.98) 0%,rgba(15,12,8,.96) 100%);border-top:1px solid rgba(200,137,42,.15);backdrop-filter:blur(10px);}
 .nav-row{display:flex;gap:8px;justify-content:center;}
-.nav-btn{flex:1;max-width:100px;background:rgba(20,15,10,.7);border:1px solid rgba(200,137,42,.2);
+.nav-btn{flex:1;max-width:100px;background:rgba(20,15,10,.85);border:1px solid rgba(200,137,42,.25);
   border-radius:8px;padding:8px 4px;color:var(--fog);font-family:'IM Fell English',serif;
-  font-style:italic;font-size:.72rem;text-align:center;cursor:pointer;transition:all .3s;backdrop-filter:blur(8px);}
+  font-style:italic;font-size:.72rem;text-align:center;cursor:pointer;transition:all .3s;backdrop-filter:blur(4px);}
 .nav-btn.active,.nav-btn:hover{border-color:var(--amber);color:var(--cream);background:rgba(200,137,42,.15);}
 .nav-btn .btn-icon{font-size:1rem;display:block;margin-bottom:2px;}
 
@@ -284,11 +284,11 @@ button{touch-action:manipulation}
 .form-title{font-family:'Cinzel Decorative',serif;font-size:1rem;color:var(--amber);margin-bottom:16px;}
 
 /* NOSIRT FIGURE */
-#nosirt-figure{position:absolute;bottom:68px;right:14px;z-index:45;cursor:pointer;animation:figFloat 4s ease-in-out infinite;}
+#nosirt-figure{position:fixed;bottom:calc(96px + env(safe-area-inset-bottom));right:16px;z-index:45;cursor:pointer;animation:figFloat 4s ease-in-out infinite;}
 @keyframes figFloat{0%,100%{transform:translateY(0);}50%{transform:translateY(-6px);}}
-#nosirt-popup{position:absolute;bottom:108px;right:10px;z-index:46;width:210px;display:none;
-  background:rgba(10,8,14,.95);border:1px solid rgba(200,137,42,.35);border-radius:14px;
-  padding:16px;backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,.5);}
+#nosirt-popup{position:fixed;bottom:calc(158px + env(safe-area-inset-bottom));right:10px;z-index:46;width:220px;display:none;
+  background:rgba(10,8,14,.98);border:1px solid rgba(200,137,42,.35);border-radius:14px;
+  padding:16px;backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,.6);max-height:70vh;overflow-y:auto;}
 #nosirt-popup.open{display:block;animation:popIn .3s ease;}
 @keyframes popIn{from{opacity:0;transform:scale(.9) translateY(8px);}to{opacity:1;transform:scale(1) translateY(0);}}
 .popup-name{font-family:'Cinzel Decorative',serif;font-size:.9rem;color:var(--amber);margin-bottom:6px;}
@@ -298,8 +298,8 @@ button{touch-action:manipulation}
   font-family:'IM Fell English',serif;font-style:italic;font-size:.8rem;text-decoration:none;}
 
 /* FLOAT NOTE */
-#float-note{position:absolute;bottom:70px;left:14px;z-index:45;width:40px;height:40px;
-  border-radius:50%;background:rgba(20,15,10,.8);border:1px solid rgba(200,137,42,.3);
+#float-note{position:fixed;bottom:calc(96px + env(safe-area-inset-bottom));left:16px;z-index:45;width:40px;height:40px;
+  border-radius:50%;background:rgba(20,15,10,.9);border:1px solid rgba(200,137,42,.4);
   display:flex;align-items:center;justify-content:center;font-size:1rem;cursor:pointer;
   animation:noteFloat 5s ease-in-out infinite;backdrop-filter:blur(8px);}
 @keyframes noteFloat{0%,100%{transform:translateY(0);}50%{transform:translateY(-5px);}}
@@ -429,16 +429,26 @@ button{touch-action:manipulation}
 }
 
 /* ── THE WIRELESS / PODCAST PLAYER ── */
+.wp-page-inner{display:flex;flex-direction:column;padding:0 !important;}
+.page-title+.page-sub{margin-bottom:12px;}
+.wp-header-controls{display:flex;justify-content:flex-end;margin-bottom:12px;gap:8px;}
+.wp-mode-label{background:rgba(200,137,42,.15);border:1px solid rgba(200,137,42,.3);
+  border-radius:20px;padding:6px 12px;color:var(--amber);font-family:'IM Fell English',serif;
+  font-style:italic;font-size:.75rem;cursor:pointer;display:flex;align-items:center;gap:6px;
+  transition:all .2s;white-space:nowrap;}
+.wp-mode-label:hover{background:rgba(200,137,42,.25);border-color:var(--amber);}
+.wp-mode-icon{font-size:.9rem;}
+.wp-mode-text{font-size:.73rem;}
+
 .wp-stage{position:relative;width:100%;aspect-ratio:16/9;border-radius:14px;overflow:hidden;
   background:linear-gradient(160deg,rgba(30,20,12,.9),rgba(10,8,6,.95));
-  border:1px solid rgba(220,174,88,.18);margin-bottom:14px;box-shadow:0 10px 30px rgba(0,0,0,.35);}
+  border:1px solid rgba(220,174,88,.18);margin-bottom:12px;box-shadow:0 10px 30px rgba(0,0,0,.35);}
 .wp-placeholder{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   font-family:'IM Fell English',serif;font-style:italic;color:var(--fog);font-size:.85rem;
   text-align:center;padding:0 24px;z-index:1;}
 .wp-yt-wrap{position:absolute;inset:0;z-index:2;transition:opacity .35s ease;}
 .wp-yt-wrap iframe{width:100%;height:100%;border:0;}
 .wp-wave{position:absolute;inset:0;width:100%;height:100%;z-index:3;transition:opacity .35s ease;}
-/* default: wave on top, video hidden underneath but still playing */
 .wp-stage.mode-wave .wp-wave{opacity:1;pointer-events:auto;}
 .wp-stage.mode-wave .wp-yt-wrap{opacity:0;pointer-events:none;}
 .wp-stage.mode-video .wp-wave{opacity:0;pointer-events:none;}
@@ -464,34 +474,67 @@ button{touch-action:manipulation}
   -webkit-tap-highlight-color:transparent;}
 .wp-btn-sub{font-size:.55rem;color:var(--amber);margin-top:1px;}
 .wp-btn-main{font-size:1.6rem;color:var(--amber);}
-.wp-mode-toggle{position:absolute;right:10px;top:-2px;font-size:.95rem;opacity:.85;}
+
 /* SEARCH + ADD TOOLBAR */
-.wp-toolbar{display:flex;gap:8px;margin-bottom:10px;align-items:center;}
+.wp-toolbar{display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-shrink:0;}
 .wp-toolbar .sq-input{margin:0;}
 .wp-add-toggle{flex-shrink:0;background:rgba(200,137,42,.18);border:1px solid rgba(200,137,42,.4);
   color:var(--amber);border-radius:10px;padding:9px 14px;font-size:.78rem;cursor:pointer;
   font-family:'IM Fell English',serif;}
 .wp-add-toggle:hover{background:rgba(200,137,42,.32);}
 .wp-add-panel{background:rgba(20,15,10,.55);border:1px solid rgba(200,137,42,.18);border-radius:12px;
-  padding:12px;margin-bottom:14px;display:flex;flex-direction:column;gap:8px;}
+  padding:12px;margin-bottom:14px;display:flex;flex-direction:column;gap:8px;flex-shrink:0;}
 #wp-gate{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
 #wp-gate .sq-input{flex:1;margin:0;}
 .wp-gate-wrong{width:100%;font-size:.7rem;color:#c85a5a;font-family:'IM Fell English',serif;font-style:italic;}
 #wp-add-form{display:flex;flex-direction:column;gap:8px;}
-/* EPISODE LIST */
-.wp-episode-list{display:flex;flex-direction:column;gap:8px;max-height:340px;overflow-y:auto;}
+
+/* EPISODE LIST — now scrollable in its own container */
+.wp-episode-list{display:flex;flex-direction:column;gap:8px;flex:1;overflow-y:auto;
+  background:rgba(10,8,6,.3);border:1px solid rgba(200,137,42,.1);border-radius:10px;
+  padding:8px;min-height:200px;}
+.wp-episode-list::-webkit-scrollbar{width:6px;}
+.wp-episode-list::-webkit-scrollbar-track{background:transparent;}
+.wp-episode-list::-webkit-scrollbar-thumb{background:rgba(200,137,42,.3);border-radius:3px;}
+.wp-episode-list::-webkit-scrollbar-thumb:hover{background:rgba(200,137,42,.5);}
+
 .wp-ep-item{display:flex;gap:10px;align-items:center;background:rgba(20,15,10,.6);
-  border:1px solid rgba(200,137,42,.15);border-radius:10px;padding:10px 12px;cursor:pointer;}
+  border:1px solid rgba(200,137,42,.15);border-radius:10px;padding:10px 12px;cursor:pointer;
+  transition:all .2s;flex-shrink:0;}
 .wp-ep-item:hover{border-color:rgba(200,137,42,.4);}
 .wp-ep-item.playing{border-color:var(--amber);background:rgba(200,137,42,.12);}
 .wp-ep-play-icon{font-size:.95rem;color:var(--amber);flex-shrink:0;}
+.wp-ep-content{flex:1;min-width:0;}
 .wp-ep-title{font-weight:600;font-size:.86rem;color:var(--cream);}
 .wp-ep-desc{font-family:'IM Fell English',serif;font-style:italic;font-size:.74rem;
   color:var(--fog);margin-top:2px;}
+.wp-ep-admin{display:none;flex;gap:6px;flex-shrink:0;align-items:center;}
+.wp-ep-admin.show{display:flex;}
+.wp-ep-btn{background:none;border:none;color:var(--fog);font-size:.7rem;cursor:pointer;
+  padding:2px 6px;border-radius:4px;transition:all .15s;}
+.wp-ep-btn:hover{color:var(--cream);background:rgba(200,137,42,.2);}
+.wp-ep-btn.delete:hover{color:#d87a7a;background:rgba(200,80,80,.15);}
 .wp-ep-empty{font-family:'IM Fell English',serif;font-style:italic;font-size:.8rem;
-  color:var(--fog);text-align:center;padding:18px 0;}
+  color:var(--fog);text-align:center;padding:18px 0;flex:1;display:flex;align-items:center;justify-content:center;}
 
 @media (max-width:520px){
   .wp-btn-row{gap:14px}
   .wp-now-title{font-size:.66rem}
+  .wp-mode-label{padding:5px 10px;font-size:.7rem}
 }
+
+/* ── ADMIN MODE STYLES ── */
+.admin-controls{display:none;gap:6px;align-items:center;padding:8px;background:rgba(200,80,80,.1);
+  border-radius:8px;border:1px solid rgba(200,80,80,.2);}
+.admin-controls.show{display:flex;}
+.admin-btn{background:none;border:none;color:var(--fog);font-size:.7rem;padding:4px 8px;
+  border-radius:4px;cursor:pointer;transition:all .15s;font-family:'IM Fell English',serif;}
+.admin-btn:hover{color:var(--cream);background:rgba(200,137,42,.2);}
+.admin-btn.delete:hover{color:#d87a7a;background:rgba(200,80,80,.25);}
+.admin-btn.edit:hover{color:var(--amber);background:rgba(200,137,42,.3);}
+.lib-admin{display:none;gap:8px;}
+.lib-admin.show{display:flex;}
+
+/* Admin unlock indicator in popup */
+#admin-panel{border:none !important;padding:0 !important;margin:0 !important;}
+#admin-unlocked{color:var(--amber);text-align:center;font-family:'IM Fell English',serif;font-size:.75rem;}

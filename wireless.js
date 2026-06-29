@@ -82,7 +82,8 @@ function nextEpisode(){
   if(!currentEpisode)return;
   const list=S.episodes;
   const i=list.findIndex(e=>e.id===currentEpisode.id);
-  if(i>-1&&i<list.length-1)loadEpisode(list[i+1]);
+  // Play the one ABOVE in the list (index decreasing), which is older since new ones are at top
+  if(i>0)loadEpisode(list[i-1]);
 }
 
 function togglePlayPause(){
@@ -210,37 +211,66 @@ function setupWaveCanvas(){
   const w=stage.clientWidth,h=stage.clientHeight;
   canvas.width=w;canvas.height=h;
   waveCtx=canvas.getContext('2d');
-  if(!waveBars.length){
-    const n=42;
-    for(let i=0;i<n;i++)waveBars.push({seed:Math.random()*10,speed:.6+Math.random()*.8});
-  }
 }
 function drawWave(t){
   if(!waveCtx)return;
   const canvas=$('wp-wave'),w=canvas.width,h=canvas.height;
+  const cx=w/2,cy=h/2;
   waveCtx.clearRect(0,0,w,h);
-  const n=waveBars.length,bw=w/n*0.62,gap=w/n;
   waveCtx.save();
-  for(let i=0;i<n;i++){
-    const b=waveBars[i];
-    const amp=waveRunning?(0.18+0.32*Math.abs(Math.sin(t*b.speed+b.seed))+0.12*Math.abs(Math.sin(t*b.speed*2.3+b.seed))):0.05;
-    const barH=h*amp;
-    const x=i*gap+(gap-bw)/2,y=(h-barH)/2;
-    const grad=waveCtx.createLinearGradient(0,y,0,y+barH);
-    grad.addColorStop(0,'rgba(255,210,110,.85)');
-    grad.addColorStop(1,'rgba(200,137,42,.55)');
-    waveCtx.fillStyle=grad;
-    roundRect(waveCtx,x,y,bw,Math.max(3,barH),bw/2);
-    waveCtx.fill();
+  
+  // Pulsing central orb
+  const pulse=0.4+0.3*Math.sin(t*2);
+  const orbSize=Math.min(w,h)*0.08;
+  const grad0=waveCtx.createRadialGradient(cx,cy,0,cx,cy,orbSize*pulse);
+  grad0.addColorStop(0,'rgba(255,210,110,'+Math.min(1,0.8+0.3*Math.sin(t*2.5))+')');
+  grad0.addColorStop(1,'rgba(200,137,42,'+Math.min(0.8,0.3+0.2*Math.sin(t*2))+')');
+  waveCtx.fillStyle=grad0;
+  waveCtx.beginPath();waveCtx.arc(cx,cy,orbSize*pulse,0,Math.PI*2);waveCtx.fill();
+  
+  // 3 orbiting rings with particles
+  for(let ring=0;ring<3;ring++){
+    const radius=Math.min(w,h)*(0.18+ring*0.12);
+    const rotSpeed=0.5-ring*0.08;
+    const angle=t*rotSpeed;
+    const opacity=waveRunning?(0.6-ring*0.15):0.2;
+    
+    // Orbit ring
+    waveCtx.strokeStyle='rgba(255,210,110,'+opacity*0.4+')';
+    waveCtx.lineWidth=1;
+    waveCtx.beginPath();waveCtx.arc(cx,cy,radius,0,Math.PI*2);waveCtx.stroke();
+    
+    // Particles along the ring
+    const partCount=6+ring*2;
+    for(let p=0;p<partCount;p++){
+      const a=angle+(Math.PI*2/partCount)*p;
+      const px=cx+Math.cos(a)*radius;
+      const py=cy+Math.sin(a)*radius;
+      const partSize=2+ring*0.8;
+      const partOpacity=opacity*(0.5+0.5*Math.sin(t*1.8+p));
+      waveCtx.fillStyle='rgba(255,210,110,'+partOpacity+')';
+      waveCtx.beginPath();waveCtx.arc(px,py,partSize,0,Math.PI*2);waveCtx.fill();
+    }
   }
+  
+  // Glow effect when playing
+  if(waveRunning){
+    const glowSize=Math.min(w,h)*0.25;
+    const glowGrad=waveCtx.createRadialGradient(cx,cy,glowSize*0.3,cx,cy,glowSize);
+    glowGrad.addColorStop(0,'rgba(255,210,110,0.3)');
+    glowGrad.addColorStop(1,'rgba(200,137,42,0)');
+    waveCtx.fillStyle=glowGrad;
+    waveCtx.beginPath();waveCtx.arc(cx,cy,glowSize,0,Math.PI*2);waveCtx.fill();
+  }
+  
   waveCtx.restore();
 }
 function waveLoop(){
-  drawWave(Date.now()/600);
+  drawWave(Date.now()/800);
   if(waveRunning)requestAnimationFrame(waveLoop);
 }
 function startWave(){ if(waveRunning)return; waveRunning=true; waveLoop(); }
-function stopWave(){ waveRunning=false; drawWave(Date.now()/600); }
+function stopWave(){ waveRunning=false; drawWave(Date.now()/800); }
 
 // ═══ EPISODE LIST + SEARCH ═══
 function renderEpisodes(){
@@ -254,9 +284,13 @@ function renderEpisodes(){
   el.innerHTML=list.map(ep=>`
     <div class="wp-ep-item ${currentEpisode&&currentEpisode.id===ep.id?'playing':''}" onclick="loadEpisodeById('${ep.id}')">
       <div class="wp-ep-play-icon">${currentEpisode&&currentEpisode.id===ep.id?'🔊':'▶'}</div>
-      <div>
+      <div class="wp-ep-content">
         <div class="wp-ep-title">${esc(ep.title)}</div>
         ${ep.desc?`<div class="wp-ep-desc">${esc(ep.desc)}</div>`:''}
+      </div>
+      <div class="wp-ep-admin ${S.adminUnlocked?'show':''}">
+        <button class="wp-ep-btn edit" onclick="editEpisode(event,'${ep.id}')" title="edit">✎</button>
+        <button class="wp-ep-btn delete" onclick="deleteEpisode(event,'${ep.id}')" title="delete">✕</button>
       </div>
     </div>`).join('');
 }
@@ -288,6 +322,39 @@ function tryRadioUnlock(){
 function parseYouTubeId(url){
   const m=(url||'').match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|v=)([a-zA-Z0-9_-]{11})/);
   return m?m[1]:null;
+}
+
+function deleteEpisode(e,id){
+  if(!S.adminUnlocked)return;
+  e.stopPropagation();
+  if(confirm('delete this episode?')){
+    S.episodes=S.episodes.filter(ep=>ep.id!==id);
+    localStorage.setItem('n_episodes',JSON.stringify(S.episodes));
+    fbSave('episodes',{v:JSON.stringify(S.episodes)});
+    if(currentEpisode&&currentEpisode.id===id){
+      currentEpisode=null;
+      $('wp-placeholder').style.display='flex';
+      $('wp-now-title').textContent='';
+    }
+    renderEpisodes();
+    toast('episode deleted');
+  }
+}
+function editEpisode(e,id){
+  if(!S.adminUnlocked)return;
+  e.stopPropagation();
+  const ep=S.episodes.find(x=>x.id===id);
+  if(!ep)return;
+  const newTitle=prompt('episode title:',ep.title);
+  if(newTitle===null)return;
+  ep.title=filt(newTitle.trim());
+  const newDesc=prompt('description:',ep.desc||'');
+  if(newDesc!==null)ep.desc=filt(newDesc.trim());
+  localStorage.setItem('n_episodes',JSON.stringify(S.episodes));
+  fbSave('episodes',{v:JSON.stringify(S.episodes)});
+  if(currentEpisode&&currentEpisode.id===id)$('wp-now-title').textContent=ep.title;
+  renderEpisodes();
+  toast('episode updated');
 }
 
 function addEpisode(){
