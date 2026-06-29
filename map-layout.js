@@ -30,6 +30,7 @@ function enterSite(){
     fbListen('notes', d=>{ S.notes=d.v||''; renderNotes(); });
     fbListen('screams',d=>{ S.screams=JSON.parse(d.v||'[]'); renderScreams(); });
     fbListen('episodes',d=>{ S.episodes=JSON.parse(d.v||'[]'); renderEpisodes(); });
+    fbListenStories(items=>{ if(items.length){ S.library=items; localStorage.setItem('n_library',JSON.stringify(S.library)); if(typeof renderBookList==='function')renderBookList(); } });
   },1200);
 }
 
@@ -238,7 +239,6 @@ function navTo(page){
 
 // ═══ NAV ═══
 function showPage(page){
-  if(S.view==='wireless'&&page!=='wireless'&&ytPlayer)ytPlayer.pauseVideo();
   // Hide map and all mood worlds
   $('map-world').style.display='none';
   $('map-reset').style.display='none';
@@ -267,7 +267,6 @@ function showPage(page){
 }
 
 function showMap(){
-  if(S.view==='wireless'&&ytPlayer)ytPlayer.pauseVideo();
   document.querySelectorAll('.page').forEach(p=>{p.classList.remove('active');p.style.display='none';});
   document.querySelectorAll('.mood-world').forEach(w=>{w.classList.remove('active');w.style.opacity='0';w.style.pointerEvents='none';});
   $('map-world').style.display='block';
@@ -443,7 +442,40 @@ function selectMusic(mode,el){toggleMusic(mode);}
 function openMusicModal(){$('music-modal').classList.add('open');}
 function closeMusicModal(){$('music-modal').classList.remove('open');}
 
-// ═══ CLOUD + FIGURE ANIMATION ═══
+// ═══ ADMIN MODE ═══
+function tryAdminUnlock(){
+  const val=$('admin-pw-input').value.trim().toLowerCase();
+  if(val===ADMIN_PW){
+    S.adminUnlocked=true;
+    $('admin-locked').style.display='none';
+    $('admin-unlocked').style.display='block';
+    $('admin-pw-input').value='';
+    $('admin-wrong').textContent='';
+    updateAdminUI();
+    toast('admin unlocked');
+  }else{
+    $('admin-pw-input').classList.add('wrong');
+    $('admin-wrong').textContent='wrong password';
+    setTimeout(()=>$('admin-pw-input').classList.remove('wrong'),420);
+    $('admin-pw-input').value='';
+  }
+}
+function lockAdmin(){
+  S.adminUnlocked=false;
+  $('admin-locked').style.display='flex';
+  $('admin-unlocked').style.display='none';
+  $('admin-pw-input').value='';
+  $('admin-wrong').textContent='';
+  updateAdminUI();
+  toast('admin locked');
+}
+function updateAdminUI(){
+  // Show/hide admin controls on episodes, posts, notes, etc.
+  document.querySelectorAll('.wp-ep-admin, .admin-controls, .rec-admin, .post-admin, .note-admin, .scream-admin, .lib-admin').forEach(el=>{
+    if(S.adminUnlocked)el.classList.add('show');
+    else el.classList.remove('show');
+  });
+}
 // (now handled by canvas map engine — see initMapCanvas/drawMap)
 function animateClouds(){} // no-op: canvas handles clouds
 function spawnFigures(){} // no-op: canvas handles figures
