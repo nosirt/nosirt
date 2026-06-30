@@ -538,3 +538,100 @@ button{touch-action:manipulation}
 /* Admin unlock indicator in popup */
 #admin-panel{border:none !important;padding:0 !important;margin:0 !important;}
 #admin-unlocked{color:var(--amber);text-align:center;font-family:'IM Fell English',serif;font-size:.75rem;}
+
+/* ═══════════════════════════════════════════════════════════
+   v01.04 STYLES — About Modal, Polish & Finalization
+   ═══════════════════════════════════════════════════════════ */
+
+/* v01.04: About modal */
+#about-modal {
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; backdrop-filter: blur(0px); }
+  to { opacity: 1; backdrop-filter: blur(3px); }
+}
+
+#about-modal > div {
+  animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(30px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* v01.04: Admin panel animation */
+@keyframes panelSlideIn {
+  from { opacity: 0; transform: translateY(20px) scale(0.9); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+#admin-drag-panel {
+  animation: panelSlideIn 0.3s ease;
+}
+
+/* v01.04: Profile icon hover */
+#nosirt-figure {
+  transition: filter 0.2s ease, transform 0.2s ease;
+}
+
+#nosirt-figure:hover {
+  filter: drop-shadow(0 0 12px rgba(200, 137, 42, 0.5));
+  transform: scale(1.05);
+}
+
+/* v01.04: Version history styling */
+#version-list-modal {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(200, 137, 42, 0.3) rgba(10, 8, 6, 0.5);
+}
+
+#version-list-modal::-webkit-scrollbar {
+  width: 6px;
+}
+
+#version-list-modal::-webkit-scrollbar-track {
+  background: rgba(10, 8, 6, 0.5);
+  border-radius: 3px;
+}
+
+#version-list-modal::-webkit-scrollbar-thumb {
+  background: rgba(200, 137, 42, 0.3);
+  border-radius: 3px;
+}
+
+#version-list-modal::-webkit-scrollbar-thumb:hover {
+  background: rgba(200, 137, 42, 0.5);
+}
+
+/* v01.04: Drag handle cursor */
+.drag-handle {
+  cursor: move !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+.drag-handle:active {
+  opacity: 0.8;
+}
+
+@media (max-width: 600px) {
+  #about-modal > div {
+    margin: 0;
+    border-radius: 12px;
+    max-height: 90vh;
+  }
+
+  #version-list-modal {
+    max-height: 250px;
+  }
+  
+  #admin-drag-panel {
+    width: 180px;
+    right: 12px;
+    bottom: calc(80px + env(safe-area-inset-bottom));
+  }
+}
+

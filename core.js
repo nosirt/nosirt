@@ -5,6 +5,71 @@
    and small helper functions every other file relies on.
    ============================================================ */
 
+// ═══ VERSION HISTORY ═══
+const VERSION_HISTORY = [
+  {
+    version: '01.04',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'About modal — click profile icon to see bio, instagram, and version history',
+      'Version history expandable list in About modal (all versions with bullets)',
+      'Draggable admin login panel — separate from About, can be positioned anywhere',
+      'Admin panel persists position to localStorage across reloads',
+      'Polished modal styling with animations and hover effects',
+      'Responsive design for mobile and desktop',
+      'All loose ends tied up — everything fully functional'
+    ]
+  },
+  {
+    version: '01.03',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'Episode auto-advance fully implemented — plays next episode when current finishes',
+      'Toast notification when auto-advancing to next episode',
+      'Resume last-played episode on reload (localStorage) instead of always starting at newest',
+      'Handle end-of-series gracefully — stops playback with message when no more episodes',
+      'Save current episode ID automatically when loaded',
+      'Prevent accidental re-triggering of auto-advance'
+    ]
+  },
+  {
+    version: '01.02',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'Podcast background playback — click wireless from music bar plays in background (no page redirect) after first episode',
+      'First time selecting podcast still opens wireless page to pick an episode',
+      'Switching to ambient music auto-pauses podcast and remembers timestamp',
+      'Podcast resumes from where it was paused when toggled back'
+    ]
+  },
+  {
+    version: '01.01',
+    date: '6/29/2024',
+    changes: [
+      'Draggable admin login panel (username/password)',
+      'Spotify-style podcast player with progress tracking',
+      'Map UI (zoom, recenter) fade in/out on tap (3 sec auto-hide)',
+      'Episode progress persistence (localStorage per episode)',
+      'Auto-advance framework (incomplete)',
+      'Recenter button fully centers map to viewport edges',
+      'Removed hint text ("zoom or pinch", "distance from tower")'
+    ]
+  },
+  {
+    version: '01.00',
+    date: '6/29/2024',
+    changes: [
+      'Initial Nosirt launch',
+      'Map-based location system (Ancient Tower, Garden, Square)',
+      'Keep library (docx/PDF upload, auto-chapter detection)',
+      'Wireless podcast player with episode list',
+      'Lofi/Dark Ambient/Ancient ambience music streaming',
+      'Posts, recommendations, notes, screams social features'
+    ]
+  }
+];
+const CURRENT_VERSION = VERSION_HISTORY[0].version;
+
 // ═══ FIREBASE ═══
 const firebaseConfig = {
   apiKey: "AIzaSyBDOV1E15XA04WpTCSoFLoc4SxW4ec0bNw",

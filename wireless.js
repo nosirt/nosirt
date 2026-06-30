@@ -8,6 +8,27 @@
    searchable episode list, and the password-gated "add episode"
    form. Episodes are stored in S.episodes and synced through
    Firebase via fbSave/fbListen, same as every other feature.
+   
+   ═══ v01.03 NOTES — AUTO-ADVANCE ═══
+   When current episode finishes (YT event 0):
+   - onPlayerStateChange() calls nextEpisode() (line 63)
+   - nextEpisode() finds current episode index
+   - If more episodes exist (i>0): loads previous (older) episode
+     and auto-plays with toast notification
+   - If no more episodes: stops playback, shows "end of series"
+   - loadEpisode() auto-saves episode ID to localStorage
+   - On podcast restart: loadLastPodcastEpisode() resumes from
+     last-played instead of always playing newest
+   
+   ═══ v01.02 NOTES ═══
+   Background playback is now fully wired:
+   - map-layout.js line ~406: toggleMusic() no longer forces
+     showPage('wireless') if currentEpisode already loaded
+   - First time: still opens wireless page to pick an episode
+   - After first episode: clicking podcast icon just plays it
+     in background, no page navigation
+   - Switching to ambient music auto-pauses podcast (line 431)
+   - Podcast resumes from timestamp if toggled back
    ============================================================ */
 
 // ═══ STATE ═══
@@ -67,6 +88,8 @@ function takeOverMusicForPodcast(){
 // ═══ LOADING AN EPISODE ═══
 function loadEpisode(ep){
   currentEpisode=ep;
+  // v01.03: Save as last-played for resuming later
+  localStorage.setItem('n_last_podcast_ep', ep.id);
   $('wp-placeholder').style.display='none';
   $('wp-now-title').textContent=ep.title;
   if(ytPlayer)ytPlayer.loadVideoById(ep.videoId);
@@ -79,11 +102,47 @@ function loadEpisodeById(id){
 }
 
 function nextEpisode(){
-  if(!currentEpisode)return;
+  if(!currentEpisode || !S.episodes)return;
+  
   const list=S.episodes;
   const i=list.findIndex(e=>e.id===currentEpisode.id);
-  // Play the one ABOVE in the list (index decreasing), which is older since new ones are at top
-  if(i>0)loadEpisode(list[i-1]);
+  
+  // v01.03: Check if there's a next episode to play
+  if(i>0){
+    // Play the one ABOVE in the list (index decreasing), which is older since new ones are at top
+    const nextEp = list[i-1];
+    loadEpisode(nextEp);
+    // v01.03: Notify user of auto-advance
+    toast(`auto-playing next: ${nextEp.title}`);
+    // v01.03: Save current episode to resume position if needed
+    localStorage.setItem('n_last_podcast_ep', nextEp.id);
+  }else{
+    // v01.03: No more episodes — stop playback and notify
+    if(ytPlayer)ytPlayer.pauseVideo();
+    activeMusic=null;
+    updateNP('🎙 you\'ve listened to everything!');
+    toast('end of podcast series reached');
+    document.querySelectorAll('.music-opt').forEach(o=>o.classList.remove('playing'));
+  }
+}
+
+// v01.03: Save and restore last-played episode on load
+function saveLastPodcastEpisode(){
+  if(currentEpisode){
+    localStorage.setItem('n_last_podcast_ep', currentEpisode.id);
+  }
+}
+
+function loadLastPodcastEpisode(){
+  const lastId = localStorage.getItem('n_last_podcast_ep');
+  if(lastId && S.episodes){
+    const ep = S.episodes.find(e=>e.id===lastId);
+    if(ep){
+      loadEpisode(ep);
+      return true;
+    }
+  }
+  return false;
 }
 
 function togglePlayPause(){

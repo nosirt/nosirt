@@ -409,10 +409,23 @@ function toggleMusic(key){
       document.querySelectorAll('.music-opt').forEach(o=>o.classList.remove('playing'));
       const el=document.querySelector(`.music-opt[data-key="podcast"]`);
       if(el)el.classList.add('playing');
-      showPage('wireless'); // the controls live there
-      if(currentEpisode&&ytPlayer)ytPlayer.playVideo();
-      else if(S.episodes.length)loadEpisode(S.episodes[0]);
-      else{updateNP('🎙 add an episode first');toast('no episodes yet — add one below');}
+      
+      // v01.02: Background playback — only navigate if first time (no episode loaded yet)
+      if(currentEpisode&&ytPlayer){
+        // Episode already selected — play it in background without navigating
+        ytPlayer.playVideo();
+      }else if(S.episodes.length){
+        // First time — need to load an episode, so show the wireless page
+        showPage('wireless');
+        // v01.03: Try to resume last episode user was listening to, otherwise start with newest
+        if(!loadLastPodcastEpisode()){
+          loadEpisode(S.episodes[0]);
+        }
+      }else{
+        // No episodes exist
+        updateNP('🎙 add an episode first');
+        toast('no episodes yet — add one below');
+      }
     }
     closeMusicModal();
     return;
@@ -1131,4 +1144,173 @@ window.addEventListener('load',()=>{
 window.addEventListener('resize',()=>{
   const cv=$('sparkle-canvas');if(cv){cv.width=window.innerWidth;cv.height=window.innerHeight;}
   if(S.view==='map'){fitMap();updatePinOverlay();}
+});
+
+// ═══════════════════════════════════════════════════════════
+// v01.04 — About Modal, Admin Panel, Finalization
+// ═══════════════════════════════════════════════════════════
+
+// v01.04: Toggle admin panel visibility
+function toggleAdminPanel() {
+  const panel = $('admin-drag-panel');
+  if (!panel) return;
+  panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+}
+
+// v01.04: Show admin panel (called on startup or when needed)
+function showAdminPanel() {
+  const panel = $('admin-drag-panel');
+  if (panel) panel.style.display = 'flex';
+}
+
+// v01.04: Hide admin panel
+function hideAdminPanel() {
+  const panel = $('admin-drag-panel');
+  if (panel) panel.style.display = 'none';
+}
+function showAboutModal() {
+  const modal = $('about-modal');
+  const versionList = $('version-list-modal');
+  
+  modal.style.display = 'flex';
+  
+  // Populate version history
+  versionList.innerHTML = '';
+  VERSION_HISTORY.forEach((v, idx) => {
+    const item = document.createElement('div');
+    item.style.cssText = `
+      background: rgba(200,137,42,${idx === 0 ? '.12' : '.05'});
+      border: 1px solid rgba(200,137,42,${idx === 0 ? '.25' : '.15'});
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: all .2s;
+    `;
+    
+    const isLatest = idx === 0 ? ' ★ latest' : '';
+    item.innerHTML = `
+      <div style="font-family:'Cinzel Decorative',serif;font-size:.85rem;color:var(--amber);margin-bottom:4px">v${v.version}${isLatest}</div>
+      <div style="font-size:.7rem;color:var(--fog);opacity:.6;margin-bottom:6px">${v.date}</div>
+      <div style="font-size:.75rem;color:var(--cream);line-height:1.5">
+        ${v.changes.map(ch => `• ${ch}`).join('<br>')}
+      </div>
+    `;
+    
+    item.addEventListener('mouseover', () => {
+      item.style.background = `rgba(200,137,42,${idx === 0 ? '.2' : '.12'})`;
+      item.style.borderColor = 'rgba(200,137,42,.35)';
+    });
+    item.addEventListener('mouseout', () => {
+      item.style.background = `rgba(200,137,42,${idx === 0 ? '.12' : '.05'})`;
+      item.style.borderColor = `rgba(200,137,42,${idx === 0 ? '.25' : '.15'})`;
+    });
+    
+    versionList.appendChild(item);
+  });
+}
+
+function closeAboutModal() {
+  $('about-modal').style.display = 'none';
+}
+
+function toggleVersionList() {
+  const list = $('version-list-modal');
+  const arrow = $('version-toggle-arrow');
+  const isHidden = list.style.display === 'none';
+  list.style.display = isHidden ? 'block' : 'none';
+  arrow.style.transform = isHidden ? 'rotate(180deg)' : 'rotate(0deg)';
+  arrow.style.transition = 'transform .3s ease';
+}
+
+// v01.04: Admin login functions
+function handleAdminLogin() {
+  const username = $('admin-username').value.trim();
+  const password = $('admin-password').value.trim();
+  const errorDiv = $('admin-login-error');
+
+  if (username === 'admin' && password === 'admin') {
+    S.adminUnlocked = true;
+    errorDiv.textContent = '';
+    $('admin-username').value = '';
+    $('admin-password').value = '';
+    $('admin-login-form').style.display = 'none';
+    $('admin-unlocked-view').style.display = 'block';
+    toast('admin mode unlocked');
+    document.querySelectorAll('.lib-admin, .wp-ep-admin, .admin-controls').forEach(el => {
+      el.classList.add('show');
+    });
+  } else {
+    errorDiv.textContent = 'wrong username or password';
+  }
+}
+
+function handleAdminLogout() {
+  S.adminUnlocked = false;
+  $('admin-username').value = '';
+  $('admin-password').value = '';
+  $('admin-unlocked-view').style.display = 'none';
+  $('admin-login-form').style.display = 'flex';
+  toast('admin locked');
+  document.querySelectorAll('.lib-admin, .wp-ep-admin, .admin-controls').forEach(el => {
+    el.classList.remove('show');
+  });
+}
+
+// v01.04: Draggable admin panel setup
+function initDragPanel() {
+  const panel = $('admin-drag-panel');
+  const handle = $('drag-handle');
+  let isDragging = false;
+  let startX = 0, startY = 0;
+
+  const saved = localStorage.getItem('n_drag_panel_pos');
+  if (saved) {
+    const pos = JSON.parse(saved);
+    if (pos.right) panel.style.right = pos.right + 'px';
+    if (pos.bottom) panel.style.bottom = pos.bottom + 'px';
+    if (pos.left) panel.style.left = pos.left + 'px';
+    if (pos.top) panel.style.top = pos.top + 'px';
+  }
+
+  handle.addEventListener('pointerdown', (e) => {
+    isDragging = true;
+    const rect = panel.getBoundingClientRect();
+    startX = e.clientX - rect.left;
+    startY = e.clientY - rect.top;
+  });
+
+  document.addEventListener('pointermove', (e) => {
+    if (!isDragging) return;
+    const x = e.clientX - startX;
+    const y = e.clientY - startY;
+    panel.style.left = x + 'px';
+    panel.style.top = y + 'px';
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+  });
+
+  document.addEventListener('pointerup', () => {
+    if (isDragging) {
+      isDragging = false;
+      const pos = {
+        left: panel.style.left,
+        top: panel.style.top,
+        right: panel.style.right,
+        bottom: panel.style.bottom
+      };
+      localStorage.setItem('n_drag_panel_pos', JSON.stringify(pos));
+    }
+  });
+
+  panel.style.display = 'flex';
+}
+
+// v01.04: Initialize on load
+window.addEventListener('DOMContentLoaded', () => {
+  setTimeout(() => {
+    if (typeof initDragPanel === 'function') {
+      initDragPanel();
+    }
+  }, 100);
 });

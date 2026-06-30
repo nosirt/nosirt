@@ -306,8 +306,8 @@
   </div>
 </div>
 
-<!-- NOSIRT FIGURE -->
-<div id="nosirt-figure" onclick="togglePopup()">
+<!-- NOSIRT FIGURE (draggable, opens About) -->
+<div id="nosirt-figure" onclick="showAboutModal()" title="click for about / version history" style="cursor:help;">
   <svg width="36" height="52" viewBox="0 0 36 52" xmlns="http://www.w3.org/2000/svg">
     <path d="M10,22 Q8,36 9,50 L27,50 Q28,36 26,22 Q22,20 18,20 Q14,20 10,22Z" fill="#2a1a0a" stroke="rgba(200,137,42,.4)" stroke-width=".8"/>
     <path d="M18,22 L18,50" stroke="rgba(200,137,42,.18)" stroke-width=".5"/>
@@ -319,23 +319,58 @@
     <circle cx="15" cy="13" r="1.2" fill="rgba(200,137,42,.6)"/><circle cx="21" cy="13" r="1.2" fill="rgba(200,137,42,.6)"/>
   </svg>
 </div>
-<div id="nosirt-popup">
-  <div class="popup-name">nosirt</div>
-  <div class="popup-bio">collector of strange things and quiet moments. this is my corner of the internet. wander freely.</div>
-  <a href="https://instagram.com/nosirt" target="_blank" class="popup-insta"><span>📷</span> @nosirt on instagram</a>
-  
-  <div id="admin-panel" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid rgba(200,137,42,.2);">
-    <div id="admin-locked">
-      <div style="font-size:.75rem;color:var(--fog);margin-bottom:6px;">admin mode</div>
-      <div style="display:flex;gap:6px;">
-        <input class="sq-input" id="admin-pw-input" type="password" placeholder="password..." style="margin:0;flex:1;font-size:.8rem;padding:6px 8px;height:28px;">
-        <button class="sq-submit" onclick="tryAdminUnlock()" style="width:auto;padding:6px 10px;font-size:.75rem;">unlock</button>
+
+<!-- v01.04: ABOUT MODAL (replaces old profile popup) -->
+<div id="about-modal" style="display:none;position:fixed;inset:0;z-index:99;background:rgba(0,0,0,.7);backdrop-filter:blur(3px);padding:20px;overflow-y:auto;touch-action:manipulation;">
+  <div style="max-width:520px;margin:0 auto;background:rgba(10,8,6,.98);border:1px solid rgba(200,137,42,.3);border-radius:16px;padding:28px;box-shadow:0 8px 32px rgba(0,0,0,.6)">
+    <!-- Header -->
+    <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:24px">
+      <div>
+        <div style="font-family:'Cinzel Decorative',serif;font-size:1.2rem;color:var(--amber);margin-bottom:4px">nosirt</div>
+        <div style="font-size:.75rem;color:var(--fog);opacity:.7">v${CURRENT_VERSION}</div>
       </div>
-      <div id="admin-wrong" style="font-size:.65rem;color:#c85a5a;margin-top:2px;font-family:'IM Fell English',serif;font-style:italic;"></div>
+      <button onclick="closeAboutModal()" style="background:none;border:none;color:var(--fog);font-size:1.4rem;cursor:pointer;padding:0;width:32px;height:32px;display:flex;align-items:center;justify-content:center">✕</button>
     </div>
-    <div id="admin-unlocked" style="display:none;">
-      <div style="font-size:.75rem;color:var(--amber);margin-bottom:8px;">🔓 admin unlocked</div>
-      <button class="sq-submit" onclick="lockAdmin()" style="width:100%;padding:6px;font-size:.75rem;">lock admin</button>
+
+    <!-- Bio -->
+    <div style="margin-bottom:24px">
+      <div style="font-family:'IM Fell English',serif;font-style:italic;font-size:.9rem;color:var(--cream);line-height:1.8;margin-bottom:16px">collector of strange things and quiet moments. this is my corner of the internet. wander freely.</div>
+      <a href="https://instagram.com/nosirt" target="_blank" style="display:inline-flex;align-items:center;gap:8px;color:var(--amber);text-decoration:none;font-size:.8rem;border-bottom:1px solid rgba(200,137,42,.3);padding-bottom:2px;transition:all .2s">
+        <span>📷</span>@nosirt on instagram
+      </a>
+    </div>
+
+    <!-- Version & History -->
+    <div style="border-top:1px solid rgba(200,137,42,.2);padding-top:20px">
+      <button onclick="toggleVersionList()" style="background:none;border:none;color:var(--amber);font-family:'Cinzel Decorative',serif;font-size:.85rem;cursor:pointer;padding:8px 0;width:100%;text-align:left;display:flex;justify-content:space-between;align-items:center;hover-opacity:0.8">
+        <span>version history</span>
+        <span id="version-toggle-arrow">▼</span>
+      </button>
+      <div id="version-list-modal" style="display:none;margin-top:12px;max-height:350px;overflow-y:auto">
+        <!-- populated by showAboutModal() -->
+      </div>
+
+      <!-- v01.04: Admin panel toggle (in About modal for easy access) -->
+      <button onclick="toggleAdminPanel();closeAboutModal()" style="background:none;border:none;color:var(--amber);font-family:'Cinzel Decorative',serif;font-size:.85rem;cursor:pointer;padding:8px 0;width:100%;text-align:left;margin-top:16px;border-top:1px solid rgba(200,137,42,.15);padding-top:16px">
+        ⚙ admin panel
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- v01.04: DRAGGABLE ADMIN PANEL (separate from About) -->
+<div id="admin-drag-panel" style="display:none;position:fixed;width:200px;background:rgba(10,8,6,.95);border:1px solid rgba(200,137,42,.2);border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,.5);z-index:50;flex-direction:column;overflow:hidden;right:16px;bottom:calc(96px + env(safe-area-inset-bottom));animation:panelSlideIn .3s ease">
+  <div class="drag-handle" id="drag-handle" style="background:rgba(200,137,42,.1);border-bottom:1px solid rgba(200,137,42,.15);padding:12px;cursor:move;user-select:none;text-align:center;font-family:'Cinzel Decorative',serif;font-size:.8rem;color:var(--amber)">admin</div>
+  <div class="drag-content" style="padding:12px;flex:1;overflow-y:auto;max-height:300px">
+    <div id="admin-login-form" style="display:flex;flex-direction:column;gap:8px">
+      <input type="text" id="admin-username" class="sq-input" placeholder="username" style="margin:0">
+      <input type="password" id="admin-password" class="sq-input" placeholder="password" style="margin:0">
+      <button class="sq-submit" onclick="handleAdminLogin()">unlock →</button>
+      <div id="admin-login-error" style="font-size:.7rem;color:#c85a5a;margin-top:2px;font-family:'IM Fell English',serif;font-style:italic;"></div>
+    </div>
+    <div id="admin-unlocked-view" style="display:none;text-align:center">
+      <div style="font-size:.75rem;color:var(--amber);margin-bottom:8px;font-family:'Cinzel Decorative',serif">🔓 admin unlocked</div>
+      <button class="sq-submit" onclick="handleAdminLogout()" style="width:100%;font-size:.75rem;">lock admin</button>
     </div>
   </div>
 </div>
