@@ -1314,3 +1314,193 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   }, 100);
 });
+
+// ═══════════════════════════════════════════════════════════
+// v01.05 — Profile Icon Draggable, Admin/Bio/Versions Integrated
+// ═══════════════════════════════════════════════════════════
+
+function openProfilePanel() {
+  const panel = $('profile-panel');
+  if (panel) {
+    panel.style.display = 'flex';
+    loadProfileData();
+  }
+}
+
+function closeProfilePanel() {
+  const panel = $('profile-panel');
+  if (panel) panel.style.display = 'none';
+}
+
+async function loadProfileData() {
+  // Load bio from Firebase
+  const bio = await fetchSiteBio();
+  $('profile-bio-display').textContent = bio;
+
+  // Show admin buttons if unlocked
+  if (S.adminUnlocked) {
+    $('profile-bio-edit-btn').style.display = 'block';
+    loadChangelogIfAdmin();
+  }
+}
+
+function loadChangelogIfAdmin() {
+  if (!S.adminUnlocked) return;
+  const changelogDiv = $('profile-changelog');
+  changelogDiv.innerHTML = '';
+  
+  VERSION_HISTORY.forEach((v, idx) => {
+    const item = document.createElement('div');
+    item.style.cssText = 'margin-bottom:8px;padding:6px;background:rgba(200,137,42,.08);border-radius:4px';
+    item.innerHTML = `
+      <div style="font-weight:bold;color:var(--amber)">v${v.version}</div>
+      <div>${v.changes.map(ch => `• ${ch}`).join('<br>')}</div>
+    `;
+    changelogDiv.appendChild(item);
+  });
+  changelogDiv.style.display = 'block';
+}
+
+function startBioEdit() {
+  $('profile-bio-display').style.display = 'none';
+  $('profile-bio-edit-btn').style.display = 'none';
+  $('profile-bio-edit').style.display = 'block';
+  $('profile-bio-buttons').style.display = 'flex';
+  $('profile-bio-edit').value = $('profile-bio-display').textContent;
+}
+
+function cancelBioEdit() {
+  $('profile-bio-edit').style.display = 'none';
+  $('profile-bio-buttons').style.display = 'none';
+  $('profile-bio-display').style.display = 'block';
+  $('profile-bio-edit-btn').style.display = 'block';
+}
+
+async function saveBioEdit() {
+  const newBio = $('profile-bio-edit').value.trim();
+  if (newBio.length < 5) {
+    toast('bio must be at least 5 characters');
+    return;
+  }
+  
+  const success = await saveSiteBio(newBio);
+  if (success) {
+    $('profile-bio-display').textContent = newBio;
+    cancelBioEdit();
+  }
+}
+
+async function handleAdminLoginProfile() {
+  const username = $('admin-username-profile').value.trim();
+  const password = $('admin-password-profile').value.trim();
+  const errorDiv = $('admin-login-error-profile');
+
+  const isValid = await validatePassword('admin_password', password);
+  
+  if (username === 'admin' && isValid) {
+    S.adminUnlocked = true;
+    errorDiv.textContent = '';
+    $('admin-username-profile').value = '';
+    $('admin-password-profile').value = '';
+    $('admin-login-form-profile').style.display = 'none';
+    $('admin-unlocked-view-profile').style.display = 'block';
+    $('profile-bio-edit-btn').style.display = 'block';
+    loadChangelogIfAdmin();
+    toast('admin mode unlocked');
+    document.querySelectorAll('.lib-admin, .wp-ep-admin, .admin-controls').forEach(el => {
+      el.classList.add('show');
+    });
+  } else {
+    errorDiv.textContent = 'wrong username or password';
+  }
+}
+
+function handleAdminLogoutProfile() {
+  S.adminUnlocked = false;
+  $('admin-username-profile').value = '';
+  $('admin-password-profile').value = '';
+  $('admin-unlocked-view-profile').style.display = 'none';
+  $('admin-login-form-profile').style.display = 'flex';
+  $('profile-bio-edit-btn').style.display = 'none';
+  $('profile-changelog').style.display = 'none';
+  cancelBioEdit();
+  toast('admin locked');
+  document.querySelectorAll('.lib-admin, .wp-ep-admin, .admin-controls').forEach(el => {
+    el.classList.remove('show');
+  });
+}
+
+function initProfileIconDraggable() {
+  const icon = $('profile-icon');
+  const panel = $('profile-panel');
+  let isDragging = false;
+  let startX = 0, startY = 0;
+
+  // Click to open panel
+  icon.addEventListener('click', (e) => {
+    if (!isDragging) {
+      openProfilePanel();
+    }
+  });
+
+  // Dragging
+  icon.addEventListener('pointerdown', (e) => {
+    isDragging = true;
+    startX = e.clientX - icon.getBoundingClientRect().left;
+    startY = e.clientY - icon.getBoundingClientRect().top;
+  });
+
+  document.addEventListener('pointermove', (e) => {
+    if (!isDragging) return;
+    const x = e.clientX - startX;
+    const y = e.clientY - startY;
+    icon.style.position = 'fixed';
+    icon.style.left = x + 'px';
+    icon.style.top = y + 'px';
+    icon.style.right = 'auto';
+    icon.style.bottom = 'auto';
+  });
+
+  document.addEventListener('pointerup', () => {
+    if (isDragging) {
+      isDragging = false;
+      const pos = {
+        left: icon.style.left,
+        top: icon.style.top
+      };
+      localStorage.setItem('n_profile_icon_pos', JSON.stringify(pos));
+    }
+  });
+
+  // Restore position
+  const saved = localStorage.getItem('n_profile_icon_pos');
+  if (saved) {
+    const pos = JSON.parse(saved);
+    icon.style.left = pos.left;
+    icon.style.top = pos.top;
+    icon.style.right = 'auto';
+    icon.style.bottom = 'auto';
+  }
+}
+
+// Init on load
+window.addEventListener('DOMContentLoaded', () => {
+  setTimeout(() => {
+    initProfileIconDraggable();
+  }, 100);
+});
+// v01.05: Remove map UI (buttons/hints) — keep zoom/pan
+function hideMapUI() {
+  const tools = $('map-tools');
+  if (tools) tools.style.display = 'none';
+}
+
+function showMapUI() {
+  // Intentionally disabled — map UI removed in v01.05
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  setTimeout(() => {
+    hideMapUI();
+  }, 100);
+});

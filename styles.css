@@ -635,3 +635,142 @@ button{touch-action:manipulation}
   }
 }
 
+
+/* ═══════════════════════════════════════════════════════════
+   v01.05 STYLES — Profile Icon, Podcast Player, Map Cleanup
+   ═══════════════════════════════════════════════════════════ */
+
+/* v01.05: Profile icon draggable */
+.profile-icon-draggable {
+  position: fixed;
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  right: 16px;
+  z-index: 45;
+  cursor: pointer;
+  animation: figFloat 4s ease-in-out infinite;
+  transition: filter 0.2s ease, transform 0.2s ease;
+}
+
+.profile-icon-draggable:hover {
+  filter: drop-shadow(0 0 12px rgba(200, 137, 42, 0.5));
+  transform: scale(1.08);
+}
+
+/* v01.05: Profile panel */
+#profile-panel {
+  animation: slideUp 0.3s ease;
+}
+
+/* v01.05: Styled progress bar */
+.wp-progress-bar {
+  height: 6px;
+  background: linear-gradient(90deg, rgba(200, 137, 42, 0.1), rgba(200, 137, 42, 0.15));
+  border-radius: 3px;
+  overflow: hidden;
+  cursor: pointer;
+  position: relative;
+  opacity: 1;
+  transition: height 0.2s ease;
+}
+
+.wp-progress-bar:hover {
+  height: 8px;
+}
+
+.wp-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(200, 137, 42, 0.7), rgba(200, 160, 80, 0.9));
+  width: 0%;
+  transition: width 0.1s linear;
+  border-radius: 3px;
+  box-shadow: 0 0 8px rgba(200, 137, 42, 0.4);
+}
+
+/* v01.05: Podcast controls */
+.wp-controls {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+  padding: 12px 0;
+  flex-wrap: wrap;
+}
+
+.wp-btn {
+  background: rgba(200, 137, 42, 0.15);
+  border: 1px solid rgba(200, 137, 42, 0.3);
+  border-radius: 8px;
+  color: var(--amber);
+  font-size: 0.8rem;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: 'IM Fell English', serif;
+}
+
+.wp-btn:hover {
+  background: rgba(200, 137, 42, 0.25);
+  border-color: rgba(200, 137, 42, 0.5);
+}
+
+.wp-btn:active {
+  transform: scale(0.95);
+}
+
+/* v01.05: Wave/Video mode toggle */
+#wp-mode-toggle {
+  font-size: 1.2rem;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+#wp-mode-toggle:hover {
+  transform: scale(1.1);
+}
+
+/* v01.05: Video container fullscreen */
+#wp-video-container {
+  display: none;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: rgba(0, 0, 0, 0.9);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+#wp-video-container.visible {
+  display: block;
+}
+
+#yt-player {
+  width: 100%;
+  height: 100%;
+}
+
+/* v01.05: Map UI removal */
+#map-tools {
+  display: none !important;
+}
+
+@media (max-width: 600px) {
+  .profile-icon-draggable {
+    bottom: calc(80px + env(safe-area-inset-bottom));
+    right: 12px;
+  }
+
+  #profile-panel {
+    width: 240px;
+    right: 12px;
+  }
+
+  .wp-controls {
+    gap: 6px;
+  }
+
+  .wp-btn {
+    font-size: 0.7rem;
+    padding: 6px 10px;
+  }
+}
+

@@ -8,7 +8,26 @@
 // ═══ VERSION HISTORY ═══
 const VERSION_HISTORY = [
   {
-    version: '01.04',
+    version: '01.05',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'Profile icon draggable — houses admin login, bio (editable), version history',
+      'Firebase password validation — all passwords now server-side',
+      'Podcast player refactored — wave (collapsed) vs video modes',
+      'Episode auto-play on click (no manual play button needed)',
+      'Styled progress bar with seek indicator (click to jump)',
+      'Prev/next episode buttons for easy navigation',
+      'Skip forward (+10s) and backward (-10s) controls',
+      'Full-screen, theater mode buttons in video mode',
+      'Responsive design for mobile and desktop',
+      'Map UI removed — zoom/pan still works, no button hints',
+      'Admin can edit bio in profile panel (saves to Firebase)',
+      'Version history only visible when admin unlocked'
+    ]
+  },
+
+  {
+    version: '01.05',
     date: new Date().toLocaleDateString(),
     changes: [
       'About modal — click profile icon to see bio, instagram, and version history',
@@ -344,3 +363,51 @@ function esc(s){const d=document.createElement('div');d.textContent=s||'';return
 function timeAgo(ts){const d=(Date.now()-ts)/1e3;if(d<60)return'just now';if(d<3600)return~~(d/60)+'m ago';if(d<86400)return~~(d/3600)+'h ago';return~~(d/86400)+'d ago';}
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}
 function $(id){return document.getElementById(id);}
+
+// ═══ v01.05: FIREBASE PASSWORD VALIDATION ═══
+// Passwords stored server-side, validated against Firebase
+async function validatePassword(passwordType, inputValue) {
+  try {
+    const docRef = db.collection('passwords').doc(passwordType);
+    const doc = await docRef.get();
+    if (doc.exists) {
+      const storedPw = doc.data().value;
+      return inputValue.trim() === storedPw;
+    }
+    return false;
+  } catch (e) {
+    console.error('Password validation error:', e);
+    return false;
+  }
+}
+
+// Fetch site bio (editable by admin)
+async function fetchSiteBio() {
+  try {
+    const docRef = db.collection('site-config').doc('info');
+    const doc = await docRef.get();
+    if (doc.exists) {
+      return doc.data().bio || 'collector of strange things and quiet moments.';
+    }
+  } catch (e) {
+    console.error('Fetch bio error:', e);
+  }
+  return 'collector of strange things and quiet moments.';
+}
+
+// Save site bio (admin only)
+async function saveSiteBio(newBio) {
+  if (!S.adminUnlocked) {
+    toast('admin access required');
+    return false;
+  }
+  try {
+    await db.collection('site-config').doc('info').set({ bio: newBio }, { merge: true });
+    toast('bio updated');
+    return true;
+  } catch (e) {
+    console.error('Save bio error:', e);
+    toast('error saving bio');
+    return false;
+  }
+}

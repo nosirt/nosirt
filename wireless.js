@@ -1,104 +1,140 @@
 /* ============================================================
-   WIRELESS.JS — "the wireless" feature (podcast player)
-   Load this AFTER core.js (order relative to other feature
-   files doesn't matter).
-   Contains: the YouTube-backed podcast player (play/pause,
-   10s skip with exponential hold-to-fast-skip, draggable seek
-   bar, wave/video toggle, decorative wave visualizer), the
-   searchable episode list, and the password-gated "add episode"
-   form. Episodes are stored in S.episodes and synced through
-   Firebase via fbSave/fbListen, same as every other feature.
-   
-   ═══ v01.03 NOTES — AUTO-ADVANCE ═══
-   When current episode finishes (YT event 0):
-   - onPlayerStateChange() calls nextEpisode() (line 63)
-   - nextEpisode() finds current episode index
-   - If more episodes exist (i>0): loads previous (older) episode
-     and auto-plays with toast notification
-   - If no more episodes: stops playback, shows "end of series"
-   - loadEpisode() auto-saves episode ID to localStorage
-   - On podcast restart: loadLastPodcastEpisode() resumes from
-     last-played instead of always playing newest
-   
-   ═══ v01.02 NOTES ═══
-   Background playback is now fully wired:
-   - map-layout.js line ~406: toggleMusic() no longer forces
-     showPage('wireless') if currentEpisode already loaded
-   - First time: still opens wireless page to pick an episode
-   - After first episode: clicking podcast icon just plays it
-     in background, no page navigation
-   - Switching to ambient music auto-pauses podcast (line 431)
-   - Podcast resumes from timestamp if toggled back
+   WIRELESS.JS — Podcast player (v01.05)
+   YouTube-backed episodes with wave/video modes, auto-play,
+   styled progress bar, prev/next navigation, Firebase passwords
    ============================================================ */
 
-// ═══ STATE ═══
-let ytPlayer=null;          // the YT.Player instance, created lazily
-let ytApiReady=false;       // set true once YouTube's IFrame API has loaded
-let pendingVideoId=null;    // a videoId waiting for the player to become ready
-let currentEpisode=null;    // the episode object currently loaded
-let radioUnlocked=false;    // whether the add-episode password has been entered this visit
-let wpDraggingSeek=false;
-let wpHideTimer=null;
-let waveRunning=false;
+let ytPlayer = null;
+let isYTReady = false;
+let currentEpisode = null;
+let playbackTimer = null;
+let currentEpisodeId = null;
 
-// ═══ YOUTUBE IFRAME API ═══
-// Called automatically by the YouTube API script once it has loaded.
-function onYouTubeIframeAPIReady(){
-  ytApiReady=true;
-  if(pendingVideoId)createPlayer(pendingVideoId);
+function loadEpisodeProgress() {
+  const saved = localStorage.getItem('n_podcast_progress');
+  S.podcastProgress = saved ? JSON.parse(saved) : {};
 }
 
-function createPlayer(videoId){
-  if(!ytApiReady){pendingVideoId=videoId;return;}
-  if(ytPlayer){ytPlayer.loadVideoById(videoId);return;}
-  ytPlayer=new YT.Player('yt-player',{
-    videoId:videoId,
-    playerVars:{controls:0,modestbranding:1,rel:0,playsinline:1,cc_load_policy:1,iv_load_policy:3,fs:0},
-    events:{
-      onReady:()=>{ytPlayer.playVideo();},
-      onStateChange:onPlayerStateChange
+function saveEpisodeProgress() {
+  localStorage.setItem('n_podcast_progress', JSON.stringify(S.podcastProgress));
+}
+
+function onYouTubeIframeAPIReady() {
+  isYTReady = true;
+  console.log('YouTube API ready');
+}
+
+function initWirelessPlayer() {
+  loadEpisodeProgress();
+}
+
+function renderWirelessView() {
+  const content = $('wireless-view');
+  content.style.display = 'flex';
+  content.style.flexDirection = 'column';
+  renderEpisodeList();
+}
+
+function renderEpisodeList() {
+  const list = $('episode-list');
+  if (!list) return;
+  list.innerHTML = '';
+
+  if (!S.episodes || S.episodes.length === 0) {
+    list.innerHTML = '<div style="text-align:center;color:var(--fog);font-size:.8rem;padding:20px">no episodes yet</div>';
+    return;
+  }
+
+  S.episodes.forEach((ep, i) => {
+    const progress = S.podcastProgress[ep.id] || 0;
+    const item = document.createElement('div');
+    item.style.cssText = 'background:rgba(200,137,42,.08);border:1px solid rgba(200,137,42,.15);border-radius:8px;padding:12px;cursor:pointer;transition:all .2s';
+    item.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:6px">
+        <div style="font-family:'Cinzel Decorative',serif;font-size:.85rem;color:var(--amber);flex:1">${esc(ep.title)}</div>
+        <div style="font-size:.7rem;color:var(--fog);opacity:.6;flex-shrink:0">${ep.duration ? ep.duration + 'm' : 'live'}</div>
+      </div>
+      <div style="font-size:.75rem;color:var(--fog);opacity:.7;margin-bottom:8px">${ep.uploadedAt ? timeAgo(ep.uploadedAt) : 'unknown date'}</div>
+      <div style="height:4px;background:rgba(200,137,42,.1);border-radius:2px;overflow:hidden;margin-bottom:8px">
+        <div style="height:100%;background:rgba(200,137,42,.6);width:${progress}%;transition:width .2s"></div>
+      </div>
+      <div style="font-size:.65rem;color:var(--fog);opacity:.5">${Math.round(progress)}% watched</div>
+    `;
+    item.addEventListener('click', () => {
+      playEpisode(ep);
+      closeMusicModal();
+    });
+    item.addEventListener('mouseover', () => item.style.background = 'rgba(200,137,42,.15)');
+    item.addEventListener('mouseout', () => item.style.background = 'rgba(200,137,42,.08)');
+    list.appendChild(item);
+  });
+}
+
+function playEpisode(ep) {
+  currentEpisode = ep;
+  currentEpisodeId = ep.id;
+  S.selectedPodcast = ep.id;
+  S.musicMode = 'podcast';
+
+  localStorage.setItem('n_last_podcast_ep', ep.id);
+
+  if (!ytPlayer && isYTReady) {
+    createYTPlayer(ep);
+  } else if (isYTReady) {
+    ytPlayer.cueVideoById(ep.videoId);
+  }
+
+  $('wp-progress-bar').style.opacity = '1';
+  setTimeout(() => {
+    if (ytPlayer && isYTReady) {
+      ytPlayer.playVideo();
+      startProgressTracking(ep);
+    }
+  }, 500);
+
+  toast(`now playing: ${ep.title}`);
+}
+
+function createYTPlayer(ep) {
+  ytPlayer = new YT.Player('yt-player', {
+    height: '0',
+    width: '0',
+    videoId: ep.videoId,
+    events: {
+      onReady: (e) => {
+        e.target.playVideo();
+        startProgressTracking(ep);
+      },
+      onStateChange: (e) => {
+        if (e.data === YT.PlayerState.ENDED) {
+          nextEpisode();
+        }
+      }
     }
   });
 }
 
-function onPlayerStateChange(e){
-  const playing=e.data===1; // YT.PlayerState.PLAYING
-  const btn=$('wp-playpause');
-  if(btn)btn.textContent=playing?'❚❚':'▶';
-  if(playing){
-    startWave();
-    takeOverMusicForPodcast();
-  }else{
-    stopWave();
-  }
-  if(e.data===0)nextEpisode(); // ENDED — auto-advance
-}
+function startProgressTracking(ep) {
+  if (playbackTimer) clearInterval(playbackTimer);
 
-// Keeps the persistent top music bar in sync whenever the podcast starts
-// playing, however it was started (episode list, music bar, or auto-advance).
-function takeOverMusicForPodcast(){
-  stopAmbientMusic();
-  activeMusic='podcast';
-  document.querySelectorAll('.music-opt').forEach(o=>o.classList.remove('playing'));
-  const el=document.querySelector('.music-opt[data-key="podcast"]');
-  if(el)el.classList.add('playing');
-  updateNP(currentEpisode?('🎙 '+currentEpisode.title):'🎙 The Wireless');
-}
+  playbackTimer = setInterval(() => {
+    if (!ytPlayer || !isYTReady) return;
 
-// ═══ LOADING AN EPISODE ═══
-function loadEpisode(ep){
-  currentEpisode=ep;
-  // v01.03: Save as last-played for resuming later
-  localStorage.setItem('n_last_podcast_ep', ep.id);
-  $('wp-placeholder').style.display='none';
-  $('wp-now-title').textContent=ep.title;
-  if(ytPlayer)ytPlayer.loadVideoById(ep.videoId);
-  else{pendingVideoId=ep.videoId;createPlayer(ep.videoId);}
-  renderEpisodes();
-}
-function loadEpisodeById(id){
-  const ep=S.episodes.find(e=>e.id===id);
-  if(ep)loadEpisode(ep);
+    const current = ytPlayer.getCurrentTime();
+    const duration = ytPlayer.getDuration();
+    const progress = duration > 0 ? (current / duration) * 100 : 0;
+
+    S.podcastProgress[currentEpisodeId] = progress;
+    saveEpisodeProgress();
+
+    const fill = $('wp-progress-fill');
+    if (fill) fill.style.width = progress + '%';
+
+    if (progress >= 99) {
+      S.podcastProgress[currentEpisodeId] = 100;
+      saveEpisodeProgress();
+    }
+  }, 1000);
 }
 
 function nextEpisode(){
@@ -107,17 +143,12 @@ function nextEpisode(){
   const list=S.episodes;
   const i=list.findIndex(e=>e.id===currentEpisode.id);
   
-  // v01.03: Check if there's a next episode to play
   if(i>0){
-    // Play the one ABOVE in the list (index decreasing), which is older since new ones are at top
     const nextEp = list[i-1];
-    loadEpisode(nextEp);
-    // v01.03: Notify user of auto-advance
+    playEpisode(nextEp);
     toast(`auto-playing next: ${nextEp.title}`);
-    // v01.03: Save current episode to resume position if needed
     localStorage.setItem('n_last_podcast_ep', nextEp.id);
   }else{
-    // v01.03: No more episodes — stop playback and notify
     if(ytPlayer)ytPlayer.pauseVideo();
     activeMusic=null;
     updateNP('🎙 you\'ve listened to everything!');
@@ -126,328 +157,124 @@ function nextEpisode(){
   }
 }
 
-// v01.03: Save and restore last-played episode on load
-function saveLastPodcastEpisode(){
-  if(currentEpisode){
-    localStorage.setItem('n_last_podcast_ep', currentEpisode.id);
-  }
-}
-
 function loadLastPodcastEpisode(){
   const lastId = localStorage.getItem('n_last_podcast_ep');
   if(lastId && S.episodes){
     const ep = S.episodes.find(e=>e.id===lastId);
     if(ep){
-      loadEpisode(ep);
+      playEpisode(ep);
       return true;
     }
   }
   return false;
 }
 
-function togglePlayPause(){
-  if(!ytPlayer)return;
-  const st=ytPlayer.getPlayerState();
-  if(st===1)ytPlayer.pauseVideo();else ytPlayer.playVideo();
-}
-
-// ═══ WAVE / VIDEO TOGGLE ═══
-function toggleWaveVideo(){
-  const stage=$('wp-stage');
-  stage.classList.toggle('mode-video');
-  stage.classList.toggle('mode-wave');
-  const btn=$('wp-mode-toggle');
-  btn.textContent=stage.classList.contains('mode-video')?'🌊':'🎥';
-}
-
-// ═══ SKIP CONTROLS — tap = 10s, hold = accelerating skip ═══
-const SKIP_TAP=10;        // seconds skipped on a quick tap
-const HOLD_DELAY=350;     // ms before continuous-hold mode kicks in
-let holdTimer=null,holdInterval=null,holdStart=0;
-
-function seekBy(delta){
-  if(!ytPlayer)return;
-  const dur=ytPlayer.getDuration()||0;
-  const t=Math.max(0,Math.min(dur,ytPlayer.getCurrentTime()+delta));
-  ytPlayer.seekTo(t,true);
-}
-
-function startHold(dir){
-  holdStart=Date.now();
-  clearTimeout(holdTimer);clearInterval(holdInterval);
-  holdTimer=setTimeout(()=>{
-    holdInterval=setInterval(()=>{
-      const held=(Date.now()-holdStart)/1000; // seconds held so far
-      // grows from a few seconds/tick up toward ~1 minute per ~2s held — tune the 1.9 to taste
-      const amt=2*Math.pow(1.9,held)*0.2;
-      seekBy(dir*amt);
-      showWpControls();
-    },200);
-  },HOLD_DELAY);
-}
-function endHold(dir){
-  clearTimeout(holdTimer);
-  if(holdInterval){clearInterval(holdInterval);holdInterval=null;}
-  else{seekBy(dir*SKIP_TAP);} // released before hold kicked in = simple tap skip
-}
-
-function bindHoldButton(el,dir){
-  if(!el)return;
-  el.addEventListener('pointerdown',e=>{e.preventDefault();startHold(dir);});
-  ['pointerup','pointerleave','pointercancel'].forEach(ev=>
-    el.addEventListener(ev,()=>endHold(dir)));
-}
-
-// ═══ SEEK BAR ═══
-function fmtTime(s){
-  s=Math.max(0,~~s);
-  const m=~~(s/60),sec=s%60;
-  return m+':'+(sec<10?'0':'')+sec;
-}
-
-function seekBarUpdateLoop(){
-  if(ytPlayer&&!wpDraggingSeek&&typeof ytPlayer.getDuration==='function'){
-    const dur=ytPlayer.getDuration()||0,cur=ytPlayer.getCurrentTime()||0;
-    const pct=dur?(cur/dur*100):0;
-    $('wp-seek-fill').style.width=pct+'%';
-    $('wp-seek-handle').style.left=pct+'%';
-    $('wp-time-cur').textContent=fmtTime(cur);
-    $('wp-time-dur').textContent=fmtTime(dur);
+function toggleWaveMode() {
+  const waveContainer = $('wp-wave-container');
+  const videoContainer = $('wp-video-container');
+  
+  if (waveContainer.style.display === 'none') {
+    waveContainer.style.display = 'flex';
+    videoContainer.style.display = 'none';
+    $('wp-mode-toggle').textContent = '📺';
+  } else {
+    waveContainer.style.display = 'none';
+    videoContainer.style.display = 'block';
+    $('wp-mode-toggle').textContent = '🌊';
   }
-  requestAnimationFrame(seekBarUpdateLoop);
 }
 
-function seekBarRatioFromEvent(e){
-  const bar=$('wp-seekbar'),rect=bar.getBoundingClientRect();
-  const x=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
-  return Math.max(0,Math.min(1,x/rect.width));
-}
-
-function bindSeekBar(){
-  const bar=$('wp-seekbar');
-  if(!bar)return;
-  bar.addEventListener('pointerdown',e=>{
-    if(!ytPlayer)return;
-    wpDraggingSeek=true;showWpControls();
-    const ratio=seekBarRatioFromEvent(e);
-    $('wp-seek-fill').style.width=(ratio*100)+'%';
-    $('wp-seek-handle').style.left=(ratio*100)+'%';
-  });
-  window.addEventListener('pointermove',e=>{
-    if(!wpDraggingSeek||!ytPlayer)return;
-    const ratio=seekBarRatioFromEvent(e);
-    $('wp-seek-fill').style.width=(ratio*100)+'%';
-    $('wp-seek-handle').style.left=(ratio*100)+'%';
-  });
-  window.addEventListener('pointerup',e=>{
-    if(!wpDraggingSeek)return;
-    wpDraggingSeek=false;
-    if(!ytPlayer)return;
-    const ratio=seekBarRatioFromEvent(e);
-    const dur=ytPlayer.getDuration()||0;
-    ytPlayer.seekTo(ratio*dur,true);
-  });
-}
-
-// ═══ CONTROLS SHOW/HIDE ON HOVER OR TOUCH ═══
-function showWpControls(){
-  const c=$('wp-controls');if(!c)return;
-  c.classList.add('show');
-  clearTimeout(wpHideTimer);
-  wpHideTimer=setTimeout(()=>{
-    if(!wpDraggingSeek&&!holdInterval)c.classList.remove('show');
-  },2600);
-}
-
-// ═══ DECORATIVE WAVE VISUALIZER ═══
-// Note: a YouTube embed's audio can't be read by JS (cross-origin), so this
-// is a stylized animation that pulses while playing — not a real audio
-// analysis. It pauses/settles whenever playback is paused.
-let waveCtx=null,waveBars=[];
-function setupWaveCanvas(){
-  const canvas=$('wp-wave');if(!canvas)return;
-  const stage=$('wp-stage');
-  const w=stage.clientWidth,h=stage.clientHeight;
-  canvas.width=w;canvas.height=h;
-  waveCtx=canvas.getContext('2d');
-}
-function drawWave(t){
-  if(!waveCtx)return;
-  const canvas=$('wp-wave'),w=canvas.width,h=canvas.height;
-  const cx=w/2,cy=h/2;
-  waveCtx.clearRect(0,0,w,h);
-  waveCtx.save();
-  
-  // Pulsing central orb
-  const pulse=0.4+0.3*Math.sin(t*2);
-  const orbSize=Math.min(w,h)*0.08;
-  const grad0=waveCtx.createRadialGradient(cx,cy,0,cx,cy,orbSize*pulse);
-  grad0.addColorStop(0,'rgba(255,210,110,'+Math.min(1,0.8+0.3*Math.sin(t*2.5))+')');
-  grad0.addColorStop(1,'rgba(200,137,42,'+Math.min(0.8,0.3+0.2*Math.sin(t*2))+')');
-  waveCtx.fillStyle=grad0;
-  waveCtx.beginPath();waveCtx.arc(cx,cy,orbSize*pulse,0,Math.PI*2);waveCtx.fill();
-  
-  // 3 orbiting rings with particles
-  for(let ring=0;ring<3;ring++){
-    const radius=Math.min(w,h)*(0.18+ring*0.12);
-    const rotSpeed=0.5-ring*0.08;
-    const angle=t*rotSpeed;
-    const opacity=waveRunning?(0.6-ring*0.15):0.2;
-    
-    // Orbit ring
-    waveCtx.strokeStyle='rgba(255,210,110,'+opacity*0.4+')';
-    waveCtx.lineWidth=1;
-    waveCtx.beginPath();waveCtx.arc(cx,cy,radius,0,Math.PI*2);waveCtx.stroke();
-    
-    // Particles along the ring
-    const partCount=6+ring*2;
-    for(let p=0;p<partCount;p++){
-      const a=angle+(Math.PI*2/partCount)*p;
-      const px=cx+Math.cos(a)*radius;
-      const py=cy+Math.sin(a)*radius;
-      const partSize=2+ring*0.8;
-      const partOpacity=opacity*(0.5+0.5*Math.sin(t*1.8+p));
-      waveCtx.fillStyle='rgba(255,210,110,'+partOpacity+')';
-      waveCtx.beginPath();waveCtx.arc(px,py,partSize,0,Math.PI*2);waveCtx.fill();
-    }
+function toggleFullscreen() {
+  const videoContainer = $('wp-video-container');
+  if (videoContainer.requestFullscreen) {
+    videoContainer.requestFullscreen();
+  } else if (videoContainer.webkitRequestFullscreen) {
+    videoContainer.webkitRequestFullscreen();
   }
-  
-  // Glow effect when playing
-  if(waveRunning){
-    const glowSize=Math.min(w,h)*0.25;
-    const glowGrad=waveCtx.createRadialGradient(cx,cy,glowSize*0.3,cx,cy,glowSize);
-    glowGrad.addColorStop(0,'rgba(255,210,110,0.3)');
-    glowGrad.addColorStop(1,'rgba(200,137,42,0)');
-    waveCtx.fillStyle=glowGrad;
-    waveCtx.beginPath();waveCtx.arc(cx,cy,glowSize,0,Math.PI*2);waveCtx.fill();
-  }
-  
-  waveCtx.restore();
 }
-function waveLoop(){
-  drawWave(Date.now()/800);
-  if(waveRunning)requestAnimationFrame(waveLoop);
-}
-function startWave(){ if(waveRunning)return; waveRunning=true; waveLoop(); }
-function stopWave(){ waveRunning=false; drawWave(Date.now()/800); }
 
-// ═══ EPISODE LIST + SEARCH ═══
-function renderEpisodes(){
-  const q=($('wp-search')?$('wp-search').value:'').trim().toLowerCase();
-  const list=S.episodes.filter(e=>!q||e.title.toLowerCase().includes(q)||(e.desc||'').toLowerCase().includes(q));
-  const el=$('wp-episode-list');if(!el)return;
-  if(!list.length){
-    el.innerHTML='<div class="wp-ep-empty">no episodes yet'+(q?' match that search.':'. check back soon.')+'</div>';
+function prevEpisode() {
+  if (!S.episodes || !currentEpisode) return;
+  const i = S.episodes.findIndex(e => e.id === currentEpisode.id);
+  if (i < S.episodes.length - 1) {
+    playEpisode(S.episodes[i + 1]);
+    toast('previous episode');
+  }
+}
+
+function skipForward() {
+  if (ytPlayer && isYTReady) {
+    const current = ytPlayer.getCurrentTime();
+    ytPlayer.seekTo(current + 10);
+  }
+}
+
+function skipBackward() {
+  if (ytPlayer && isYTReady) {
+    const current = ytPlayer.getCurrentTime();
+    ytPlayer.seekTo(Math.max(0, current - 10));
+  }
+}
+
+function seekToProgress(e) {
+  if (!ytPlayer || !isYTReady) return;
+  const bar = e.currentTarget;
+  const rect = bar.getBoundingClientRect();
+  const percent = (e.clientX - rect.left) / rect.width;
+  const duration = ytPlayer.getDuration();
+  ytPlayer.seekTo(percent * duration);
+}
+
+function closeWireless() {
+  S.view = 'map';
+  renderView();
+}
+
+function toggleAddEpisode() {
+  const panel = $('add-episode-panel');
+  if (!panel) return;
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+async function publishEpisode() {
+  const pw = $('ep-pw').value.trim();
+  const title = $('ep-title').value.trim();
+  const videoId = $('ep-yt').value.trim();
+
+  const isValid = await validatePassword('podcast_password', pw);
+  if (!isValid) {
+    toast('wrong password');
     return;
   }
-  el.innerHTML=list.map(ep=>`
-    <div class="wp-ep-item ${currentEpisode&&currentEpisode.id===ep.id?'playing':''}" onclick="loadEpisodeById('${ep.id}')">
-      <div class="wp-ep-play-icon">${currentEpisode&&currentEpisode.id===ep.id?'🔊':'▶'}</div>
-      <div class="wp-ep-content">
-        <div class="wp-ep-title">${esc(ep.title)}</div>
-        ${ep.desc?`<div class="wp-ep-desc">${esc(ep.desc)}</div>`:''}
-      </div>
-      <div class="wp-ep-admin ${S.adminUnlocked?'show':''}">
-        <button class="wp-ep-btn edit" onclick="editEpisode(event,'${ep.id}')" title="edit">✎</button>
-        <button class="wp-ep-btn delete" onclick="deleteEpisode(event,'${ep.id}')" title="delete">✕</button>
-      </div>
-    </div>`).join('');
-}
-
-// ═══ ADD EPISODE (password-gated) ═══
-function toggleAddEpisode(){
-  const panel=$('wp-add-panel');
-  const open=panel.style.display==='none';
-  panel.style.display=open?'flex':'none';
-  if(open&&radioUnlocked){$('wp-gate').style.display='none';$('wp-add-form').style.display='flex';}
-  else if(open){$('wp-gate').style.display='flex';$('wp-add-form').style.display='none';}
-}
-
-function tryRadioUnlock(){
-  const val=$('wp-gate-pw').value.trim().toLowerCase();
-  if(val===RADIO_PW){
-    radioUnlocked=true;
-    $('wp-gate').style.display='none';
-    $('wp-add-form').style.display='flex';
-    $('wp-gate-pw').value='';$('wp-gate-wrong').textContent='';
-  }else{
-    $('wp-gate-pw').classList.add('wrong');
-    $('wp-gate-wrong').textContent='wrong frequency. try again.';
-    setTimeout(()=>$('wp-gate-pw').classList.remove('wrong'),420);
-    $('wp-gate-pw').value='';
+  if (!title || !videoId) {
+    toast('title and video ID required');
+    return;
   }
+
+  const ep = {
+    id: 'ep-' + Date.now(),
+    title: filt(title),
+    videoId,
+    uploadedAt: Date.now(),
+    duration: 0
+  };
+
+  S.episodes.push(ep);
+  localStorage.setItem('n_episodes', JSON.stringify(S.episodes));
+  fbSaveStory('episodes', JSON.stringify(S.episodes));
+
+  $('ep-pw').value = '';
+  $('ep-title').value = '';
+  $('ep-yt').value = '';
+  toggleAddEpisode();
+  renderEpisodeList();
+  toast('episode added');
 }
 
-function parseYouTubeId(url){
-  const m=(url||'').match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|v=)([a-zA-Z0-9_-]{11})/);
-  return m?m[1]:null;
-}
-
-function deleteEpisode(e,id){
-  if(!S.adminUnlocked)return;
-  e.stopPropagation();
-  if(confirm('delete this episode?')){
-    S.episodes=S.episodes.filter(ep=>ep.id!==id);
-    localStorage.setItem('n_episodes',JSON.stringify(S.episodes));
-    fbSave('episodes',{v:JSON.stringify(S.episodes)});
-    if(currentEpisode&&currentEpisode.id===id){
-      currentEpisode=null;
-      $('wp-placeholder').style.display='flex';
-      $('wp-now-title').textContent='';
+window.addEventListener('DOMContentLoaded', () => {
+  setTimeout(() => {
+    if (typeof initWirelessPlayer === 'function') {
+      initWirelessPlayer();
     }
-    renderEpisodes();
-    toast('episode deleted');
-  }
-}
-function editEpisode(e,id){
-  if(!S.adminUnlocked)return;
-  e.stopPropagation();
-  const ep=S.episodes.find(x=>x.id===id);
-  if(!ep)return;
-  const newTitle=prompt('episode title:',ep.title);
-  if(newTitle===null)return;
-  ep.title=filt(newTitle.trim());
-  const newDesc=prompt('description:',ep.desc||'');
-  if(newDesc!==null)ep.desc=filt(newDesc.trim());
-  localStorage.setItem('n_episodes',JSON.stringify(S.episodes));
-  fbSave('episodes',{v:JSON.stringify(S.episodes)});
-  if(currentEpisode&&currentEpisode.id===id)$('wp-now-title').textContent=ep.title;
-  renderEpisodes();
-  toast('episode updated');
-}
-
-function addEpisode(){
-  const title=filt($('wp-ep-title').value.trim());
-  const url=$('wp-ep-url').value.trim();
-  const desc=filt($('wp-ep-desc').value.trim());
-  const videoId=parseYouTubeId(url);
-  if(!title){toast('give it a title first');return;}
-  if(!videoId){toast("that doesn't look like a youtube link");return;}
-  const ep={id:'ep'+Date.now(),title,desc,videoId,addedAt:Date.now()};
-  S.episodes.unshift(ep);
-  localStorage.setItem('n_episodes',JSON.stringify(S.episodes));
-  fbSave('episodes',{v:JSON.stringify(S.episodes)});
-  $('wp-ep-title').value='';$('wp-ep-url').value='';$('wp-ep-desc').value='';
-  toast('episode added ✓');
-  renderEpisodes();
-}
-
-// ═══ INIT ═══
-// Runs once at script-load time; safe because it only wires up listeners
-// and doesn't touch the player until an episode is actually picked.
-(function initWireless(){
-  document.addEventListener('DOMContentLoaded',()=>{
-    setupWaveCanvas();
-    bindSeekBar();
-    bindHoldButton($('wp-back'),-1);
-    bindHoldButton($('wp-fwd'),1);
-    const pp=$('wp-playpause');if(pp)pp.addEventListener('click',togglePlayPause);
-    const stage=$('wp-stage');
-    if(stage){
-      ['pointerdown','pointermove'].forEach(ev=>stage.addEventListener(ev,showWpControls));
-    }
-    window.addEventListener('resize',setupWaveCanvas);
-    requestAnimationFrame(seekBarUpdateLoop);
-    drawWave(0);
-  });
-})();
+  }, 100);
+});
