@@ -162,9 +162,9 @@ let synthMusic=null;
 
 const FORUMS=['movies','shows','anime','books','music','venting','shopping','random'];
 const BAD=['fuck','shit','cunt','nigger','faggot','retard'];
-const CASTLE_PW='love';
-const RADIO_PW='signal'; // password to add a new podcast episode — change this to whatever you like
-const ADMIN_PW='admin'; // password to unlock admin mode (edit/delete/reorder all content) — change this to whatever you like
+// Passwords (admin/podcast/keep) are no longer hardcoded here — they're
+// validated server-side against Firebase via validatePassword() below,
+// so they can't be read out of this file.
 
 // People can type any genre they like when uploading a story, but it always
 // also gets mapped to one of these fixed canonical genres too, so search and

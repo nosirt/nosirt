@@ -89,10 +89,7 @@ button{touch-action:manipulation}
 #map-readout{max-width:min(78vw,360px);padding:8px 12px;border:1px solid rgba(220,174,88,.2);border-radius:12px;
   background:rgba(8,7,12,.66);backdrop-filter:blur(10px);font-family:'IM Fell English',serif;font-style:italic;
   font-size:.74rem;color:rgba(240,232,216,.82);text-align:right;box-shadow:0 8px 30px rgba(0,0,0,.28);}
-#map-hint{position:absolute;left:max(14px,env(safe-area-inset-left));bottom:calc(84px + env(safe-area-inset-bottom));z-index:41;
-  max-width:210px;padding:9px 12px;border:1px solid rgba(220,174,88,.18);border-radius:12px;background:rgba(8,7,12,.54);
-  color:rgba(240,232,216,.72);font-family:'IM Fell English',serif;font-style:italic;font-size:.72rem;line-height:1.35;
-  backdrop-filter:blur(9px);pointer-events:none;transition:opacity .35s;}
+/* map-hint removed v01.06 */
 
 /* Location pins */
 .map-pin{position:absolute;transform:translate(-50%,-50%);
@@ -107,6 +104,22 @@ button{touch-action:manipulation}
   border:1px solid rgba(220,174,88,.28);border-radius:9px;padding:4px 8px;white-space:nowrap;pointer-events:none;
   text-shadow:0 1px 3px rgba(0,0,0,.9);box-shadow:0 6px 20px rgba(0,0,0,.25);backdrop-filter:blur(6px);}
 .pin-label.secret{color:rgba(200,137,42,.7);}
+
+/* v01.08: live/podcast status badge — lives in the top music bar */
+.wireless-badge{
+  display:flex;align-items:center;gap:4px;flex-shrink:0;cursor:pointer;
+  padding:5px 10px;border-radius:20px;
+  background:rgba(90,90,90,.35);border:1px solid rgba(255,255,255,.15);
+  font-family:'IM Fell English',serif;font-style:italic;font-size:.68rem;
+  color:rgba(230,230,230,.85);white-space:nowrap;transition:all .2s ease;}
+.wireless-badge:hover{background:rgba(120,120,120,.45);border-color:rgba(255,255,255,.28);}
+.wireless-badge-dot{width:6px;height:6px;border-radius:50%;background:rgba(210,210,210,.75);flex-shrink:0;}
+.wireless-badge.is-live{background:rgba(180,30,30,.35);border-color:rgba(255,90,90,.5);color:#ffdcdc;}
+.wireless-badge.is-live:hover{background:rgba(180,30,30,.5);border-color:rgba(255,90,90,.7);}
+.wireless-badge.is-live .wireless-badge-dot{
+  background:#ff3b3b;box-shadow:0 0 6px rgba(255,59,59,.85);
+  animation:liveBlink 1.2s ease-in-out infinite;}
+@keyframes liveBlink{0%,100%{opacity:1;}50%{opacity:.25;}}
 
 /* Moving elements */
 .cloud-drift{position:absolute;pointer-events:none;animation:cloudMove linear infinite;}
@@ -407,7 +420,6 @@ button{touch-action:manipulation}
 @media (max-width:520px){
   .music-now{font-size:.72rem}
   .music-btn{padding:7px 12px;border-radius:16px}
-  #map-hint{left:60px;right:132px;max-width:none;bottom:calc(108px + env(safe-area-inset-bottom));}
   #map-readout{font-size:.7rem;max-width:68vw}
   .map-tool{width:44px;height:44px}
   .pin-label{font-size:.68rem}
@@ -423,7 +435,6 @@ button{touch-action:manipulation}
   #bottom-nav{left:50%;right:auto;width:min(520px,calc(100vw - 36px));transform:translateX(-50%);bottom:14px;
     padding:8px;border:1px solid rgba(220,174,88,.16);border-radius:20px;background:rgba(9,7,13,.66);backdrop-filter:blur(12px);}
   #map-tools{bottom:34px}
-  #map-hint{bottom:40px}
   .page{padding-top:92px}
   .page-inner{max-width:780px}
 }
@@ -440,40 +451,104 @@ button{touch-action:manipulation}
 .wp-mode-icon{font-size:.9rem;}
 .wp-mode-text{font-size:.73rem;}
 
-.wp-stage{position:relative;width:100%;aspect-ratio:16/9;border-radius:14px;overflow:hidden;
+/* ═══ WIRELESS PLAYER — v01.07 Spotify-style redesign ═══ */
+.wp-stage{position:relative;width:100%;border-radius:14px;overflow:hidden;
   background:linear-gradient(160deg,rgba(30,20,12,.9),rgba(10,8,6,.95));
-  border:1px solid rgba(220,174,88,.18);margin-bottom:12px;box-shadow:0 10px 30px rgba(0,0,0,.35);}
+  border:1px solid rgba(220,174,88,.18);margin-bottom:12px;box-shadow:0 10px 30px rgba(0,0,0,.35);
+  transition:height .3s ease;}
 .wp-placeholder{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   font-family:'IM Fell English',serif;font-style:italic;color:var(--fog);font-size:.85rem;
   text-align:center;padding:0 24px;z-index:1;}
-.wp-yt-wrap{position:absolute;inset:0;z-index:2;transition:opacity .35s ease;}
+.wp-yt-wrap{position:absolute;inset:0;z-index:2;}
 .wp-yt-wrap iframe{width:100%;height:100%;border:0;}
-.wp-wave{position:absolute;inset:0;width:100%;height:100%;z-index:3;transition:opacity .35s ease;}
-.wp-stage.mode-wave .wp-wave{opacity:1;pointer-events:auto;}
-.wp-stage.mode-wave .wp-yt-wrap{opacity:0;pointer-events:none;}
-.wp-stage.mode-video .wp-wave{opacity:0;pointer-events:none;}
+
+/* Album-art tile (wave mode only) — small rounded square with the
+   decorative wave animation inside, like a podcast cover */
+.wp-art-tile{position:absolute;border-radius:12px;overflow:hidden;
+  background:radial-gradient(circle at 35% 30%,rgba(60,40,20,.9),rgba(10,8,6,.98));
+  border:1px solid rgba(220,174,88,.22);box-shadow:0 6px 18px rgba(0,0,0,.4);}
+.wp-wave{position:absolute;inset:0;width:100%;height:100%;}
+
+/* ─── WAVE MODE: compact "now playing" card, video fully hidden ─── */
+.wp-stage.mode-wave{height:96px;}
+.wp-stage.mode-wave .wp-yt-wrap{opacity:0;pointer-events:none;position:absolute;width:1px;height:1px;overflow:hidden;}
+.wp-stage.mode-wave .wp-art-tile{left:12px;top:12px;width:60px;height:60px;}
+.wp-stage.mode-wave .wp-video-controls{display:none !important;}
+.wp-stage.mode-wave .wp-controls{
+  position:absolute;left:84px;right:14px;top:0;bottom:0;
+  background:none;padding:0;display:flex;flex-direction:column;justify-content:center;gap:6px;
+  opacity:1;transform:none;pointer-events:auto;}
+/* single play control in wave mode lives in the button row — no separate
+   overlapping circle on top of the art tile */
+.wp-stage.mode-wave .wp-center-play{display:none !important;}
+.wp-stage.mode-wave .wp-volume-row{display:none !important;}
+
+/* ─── VIDEO MODE: full embed, classic tap-to-reveal overlay controls ─── */
+.wp-stage.mode-video{aspect-ratio:16/9;height:auto;}
 .wp-stage.mode-video .wp-yt-wrap{opacity:1;pointer-events:auto;}
-.wp-controls{position:absolute;left:0;right:0;bottom:0;z-index:5;padding:10px 12px 12px;
-  background:linear-gradient(180deg,transparent,rgba(0,0,0,.78) 60%);
+.wp-stage.mode-video .wp-art-tile{display:none;}
+.wp-stage.mode-video .wp-controls{
+  position:absolute;left:0;right:0;bottom:0;z-index:5;padding:12px 14px 14px;
+  background:linear-gradient(180deg,transparent,rgba(0,0,0,.8) 55%);
+  display:flex;flex-direction:column;gap:8px;
   opacity:0;transform:translateY(8px);transition:opacity .25s ease,transform .25s ease;pointer-events:none;}
-.wp-controls.show{opacity:1;transform:translateY(0);pointer-events:auto;}
+.wp-stage.mode-video .wp-controls.show{opacity:1;transform:translateY(0);pointer-events:auto;}
+.wp-stage.mode-video .wp-volume-row{display:flex;}
+/* only one play affordance at a time: while paused, the big center circle
+   is the sole control (bar fully hidden, not just faded — no competing
+   buttons); once playing, tap reveals the bar (with pause + seek + skip),
+   and the center circle disappears entirely */
+.wp-stage.mode-video.is-paused .wp-controls{display:none;}
+.wp-stage.mode-video.is-playing .wp-center-play{display:none !important;}
+.wp-stage.mode-video .wp-center-play{
+  width:58px;height:58px;left:50%;top:50%;transform:translate(-50%,-50%);}
+
 .wp-now-title{font-family:'Cinzel Decorative',serif;font-size:.72rem;color:var(--cream);
-  margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.wp-seekbar{position:relative;height:14px;display:flex;align-items:center;cursor:pointer;touch-action:none;}
-.wp-seekbar::before{content:'';position:absolute;left:0;right:0;height:4px;border-radius:2px;
-  background:rgba(255,255,255,.18);}
-.wp-seek-fill{position:absolute;left:0;height:4px;border-radius:2px;width:0%;
-  background:var(--amber);}
-.wp-seek-handle{position:absolute;left:0%;width:11px;height:11px;border-radius:50%;
-  background:var(--cream);box-shadow:0 0 0 3px rgba(200,137,42,.35);transform:translateX(-50%);}
-.wp-time-row{display:flex;justify-content:space-between;font-size:.64rem;color:var(--fog);
-  margin:2px 0 6px;font-family:'IM Fell English',serif;}
-.wp-btn-row{display:flex;align-items:center;justify-content:center;gap:18px;}
-.wp-btn{background:none;border:none;color:var(--cream);font-size:1.1rem;cursor:pointer;
-  display:flex;flex-direction:column;align-items:center;line-height:1;padding:6px;user-select:none;
-  -webkit-tap-highlight-color:transparent;}
-.wp-btn-sub{font-size:.55rem;color:var(--amber);margin-top:1px;}
-.wp-btn-main{font-size:1.6rem;color:var(--amber);}
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.wp-stage.mode-wave .wp-now-title{font-size:.76rem;}
+
+/* Button row — sleek Spotify-style order: skip-back / prev / PLAY / next / skip-fwd */
+.wp-btn-row{display:flex;align-items:center;justify-content:center;gap:20px;}
+.wp-stage.mode-wave .wp-btn-row{justify-content:flex-start;gap:16px;}
+.wp-btn{background:none;border:none;color:var(--cream);cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;line-height:1;padding:5px;user-select:none;
+  -webkit-tap-highlight-color:transparent;opacity:.7;transition:opacity .15s ease,transform .1s ease;}
+.wp-btn:hover{opacity:1;}
+.wp-btn:active{transform:scale(.9);}
+.wp-btn-sub{font-size:.5rem;color:var(--amber);margin-top:1px;}
+.wp-btn-main{
+  width:40px;height:40px;border-radius:50%;opacity:1;padding:0;
+  background:radial-gradient(circle at 35% 30%,rgba(255,222,150,.95),rgba(200,137,42,.95));
+  color:#1a0e05;display:flex;align-items:center;justify-content:center;
+  box-shadow:0 3px 12px rgba(200,137,42,.45);}
+.wp-stage.mode-wave .wp-btn-main{width:34px;height:34px;}
+
+/* Seek row — time labels inline with the bar, like a modern mini-player */
+.wp-seek-row{display:flex;align-items:center;gap:8px;}
+.wp-time{font-size:.62rem;color:var(--fog);font-family:'IM Fell English',serif;
+  letter-spacing:.02em;flex-shrink:0;min-width:28px;}
+.wp-time:last-child{text-align:right;}
+.wp-seekbar{position:relative;flex:1;height:16px;display:flex;align-items:center;cursor:pointer;touch-action:none;}
+.wp-seekbar::before{content:'';position:absolute;left:0;right:0;height:3px;border-radius:2px;
+  background:rgba(255,255,255,.14);}
+.wp-seek-fill{position:absolute;left:0;height:3px;border-radius:2px;width:0%;
+  background:linear-gradient(90deg,rgba(200,137,42,.85),rgba(255,210,110,.95));
+  box-shadow:0 0 6px rgba(255,210,110,.35);}
+.wp-seek-handle{position:absolute;left:0%;width:10px;height:10px;border-radius:50%;
+  background:var(--cream);box-shadow:0 1px 4px rgba(0,0,0,.4);transform:translateX(-50%) scale(0.85);
+  transition:transform .15s ease;}
+.wp-seekbar:hover .wp-seek-handle,.wp-seekbar:active .wp-seek-handle{transform:translateX(-50%) scale(1);}
+
+/* Volume — video mode only, sleek minimal range slider */
+.wp-volume-row{display:none;align-items:center;gap:8px;color:var(--fog);padding-left:2px;}
+.wp-volume-slider{-webkit-appearance:none;appearance:none;flex:0 0 84px;height:3px;border-radius:2px;
+  background:rgba(255,255,255,.18);cursor:pointer;}
+.wp-volume-slider::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:10px;border-radius:50%;
+  background:var(--cream);box-shadow:0 1px 4px rgba(0,0,0,.4);}
+.wp-volume-slider::-moz-range-thumb{width:10px;height:10px;border-radius:50%;border:none;
+  background:var(--cream);box-shadow:0 1px 4px rgba(0,0,0,.4);}
+.wp-volume-slider::-moz-range-progress{background:rgba(255,210,110,.85);height:3px;border-radius:2px;}
+
 
 /* SEARCH + ADD TOOLBAR */
 .wp-toolbar{display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-shrink:0;}
@@ -661,94 +736,78 @@ button{touch-action:manipulation}
   animation: slideUp 0.3s ease;
 }
 
-/* v01.05: Styled progress bar */
-.wp-progress-bar {
-  height: 6px;
-  background: linear-gradient(90deg, rgba(200, 137, 42, 0.1), rgba(200, 137, 42, 0.15));
-  border-radius: 3px;
-  overflow: hidden;
+/* v01.06: center play button (shown when nothing/paused) */
+.wp-center-play {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  background: rgba(10, 8, 6, 0.55);
+  border: 2px solid rgba(255, 210, 110, 0.55);
+  color: rgba(255, 210, 110, 0.9);
+  display: flex; align-items: center; justify-content: center;
   cursor: pointer;
-  position: relative;
-  opacity: 1;
-  transition: height 0.2s ease;
+  z-index: 6;
+  transition: transform 0.2s ease, background 0.2s ease;
+  backdrop-filter: blur(2px);
+}
+.wp-center-play:hover {
+  transform: translate(-50%, -50%) scale(1.08);
+  background: rgba(10, 8, 6, 0.75);
 }
 
-.wp-progress-bar:hover {
-  height: 8px;
+/* v01.06: prev/next episode buttons — reuse existing .wp-btn styling,
+   just slightly smaller than the main play/pause */
+#wp-prev, #wp-next {
+  font-size: 0.95rem;
+  opacity: 0.85;
 }
+#wp-prev:hover, #wp-next:hover { opacity: 1; }
 
-.wp-progress-fill {
-  height: 100%;
-  background: linear-gradient(90deg, rgba(200, 137, 42, 0.7), rgba(200, 160, 80, 0.9));
-  width: 0%;
-  transition: width 0.1s linear;
-  border-radius: 3px;
-  box-shadow: 0 0 8px rgba(200, 137, 42, 0.4);
+/* v01.06: fullscreen/theater controls — video mode only */
+.wp-video-controls {
+  position: absolute;
+  top: 10px; right: 10px;
+  z-index: 6;
+  gap: 6px;
 }
-
-/* v01.05: Podcast controls */
-.wp-controls {
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-  align-items: center;
-  padding: 12px 0;
-  flex-wrap: wrap;
-}
-
-.wp-btn {
-  background: rgba(200, 137, 42, 0.15);
+.wp-mini-btn {
+  background: rgba(10, 8, 6, 0.6);
   border: 1px solid rgba(200, 137, 42, 0.3);
-  border-radius: 8px;
-  color: var(--amber);
-  font-size: 0.8rem;
-  padding: 8px 12px;
+  border-radius: 6px;
+  color: var(--cream);
+  font-size: 0.85rem;
+  padding: 5px 8px;
   cursor: pointer;
   transition: all 0.2s ease;
-  font-family: 'IM Fell English', serif;
 }
-
-.wp-btn:hover {
+.wp-mini-btn:hover {
   background: rgba(200, 137, 42, 0.25);
   border-color: rgba(200, 137, 42, 0.5);
 }
 
-.wp-btn:active {
-  transform: scale(0.95);
+/* v01.07: theater mode — page-wireless takes over more of the screen */
+#page-wireless.theater-mode .wp-stage.mode-video {
+  aspect-ratio: 16 / 8;
 }
 
-/* v01.05: Wave/Video mode toggle */
-#wp-mode-toggle {
-  font-size: 1.2rem;
-  cursor: pointer;
-  transition: transform 0.2s ease;
-}
-
-#wp-mode-toggle:hover {
-  transform: scale(1.1);
-}
-
-/* v01.05: Video container fullscreen */
-#wp-video-container {
-  display: none;
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  background: rgba(0, 0, 0, 0.9);
-  border-radius: 8px;
+/* v01.06: per-episode progress bar in the episode list */
+.wp-ep-progress {
+  height: 3px;
+  background: rgba(200, 137, 42, 0.12);
+  border-radius: 2px;
   overflow: hidden;
-  margin-bottom: 12px;
+  margin-top: 6px;
 }
-
-#wp-video-container.visible {
-  display: block;
-}
-
-#yt-player {
-  width: 100%;
+.wp-ep-progress-fill {
   height: 100%;
+  background: linear-gradient(90deg, rgba(200, 137, 42, 0.7), rgba(200, 160, 80, 0.9));
+  border-radius: 2px;
 }
 
-/* v01.05: Map UI removal */
+/* v01.06: map UI removal — zoom/recenter buttons and hint text gone,
+   pinch/scroll zoom and pan still fully work via JS */
 #map-tools {
   display: none !important;
 }
@@ -764,13 +823,25 @@ button{touch-action:manipulation}
     right: 12px;
   }
 
-  .wp-controls {
-    gap: 6px;
+  .wp-stage.mode-wave {
+    height: 90px;
   }
-
-  .wp-btn {
-    font-size: 0.7rem;
-    padding: 6px 10px;
+  .wp-stage.mode-wave .wp-art-tile {
+    width: 56px; height: 56px;
+    left: 10px; top: 10px;
+  }
+  .wp-stage.mode-wave .wp-controls {
+    left: 78px;
+    right: 10px;
+  }
+  .wp-stage.mode-wave .wp-now-title {
+    font-size: .72rem;
+  }
+  .wp-stage.mode-wave .wp-btn-row {
+    gap: 12px;
+  }
+  .wp-volume-slider {
+    flex: 0 0 64px;
   }
 }
 

@@ -11,8 +11,10 @@
 // ═══ CASTLE ═══
 function openCastle(){$('castle-door').classList.add('open');}
 function closeCastle(){$('castle-door').classList.remove('open');$('castle-input').value='';$('castle-wrong').textContent='';}
-function tryCastle(){
-  if($('castle-input').value.trim().toLowerCase()===CASTLE_PW){
+async function tryCastle(){
+  const val=$('castle-input').value.trim();
+  const ok=await validatePassword('keep_password',val);
+  if(ok){
     $('castle-door').classList.remove('open');$('castle-input').value='';$('castle-wrong').textContent='';
     $('castle-interior').classList.add('open');
     setTimeout(renderBookList,50);

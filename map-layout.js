@@ -29,7 +29,16 @@ function enterSite(){
     fbListen('recs',  d=>{ S.recs=JSON.parse(d.v||'null')||[]; renderRecs(); });
     fbListen('notes', d=>{ S.notes=d.v||''; renderNotes(); });
     fbListen('screams',d=>{ S.screams=JSON.parse(d.v||'[]'); renderScreams(); });
-    fbListen('episodes',d=>{ S.episodes=JSON.parse(d.v||'[]'); renderEpisodes(); });
+    let autoLiveCheckDone=false;
+    fbListen('episodes',d=>{
+      S.episodes=JSON.parse(d.v||'[]');
+      renderEpisodes();
+      if(typeof updateLiveBadge==='function')updateLiveBadge();
+      if(!autoLiveCheckDone){
+        autoLiveCheckDone=true;
+        if(typeof autoStartLiveIfAny==='function')autoStartLiveIfAny();
+      }
+    });
     fbListenStories(items=>{ if(items.length){ S.library=items; localStorage.setItem('n_library',JSON.stringify(S.library)); if(typeof renderBookList==='function')renderBookList(); } });
   },1200);
 }
@@ -255,7 +264,7 @@ function showPage(page){
   });
   $('mood-back').classList.remove('visible');
   $('bottom-nav').style.display='block';
-  $('nosirt-figure').style.display='block';
+  $('profile-icon').style.display='block';
   $('float-note').style.display='flex';
   const pg=$('page-'+page);
   if(pg){pg.style.display='flex';pg.classList.add('active');}
@@ -273,7 +282,7 @@ function showMap(){
   $('map-reset').style.display='flex';
   $('mood-back').classList.remove('visible');
   $('bottom-nav').style.display='none';
-  $('nosirt-figure').style.display='block';
+  $('profile-icon').style.display='block';
   $('float-note').style.display='flex';
   if($('pin-overlay'))$('pin-overlay').style.display='block';
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
@@ -302,7 +311,7 @@ function enterMoodWorld(mood){
   }
   $('mood-back').classList.add('visible');
   $('bottom-nav').style.display='none';
-  $('nosirt-figure').style.display='none';
+  $('profile-icon').style.display='none';
   $('float-note').style.display='flex';
   S.mood=mood;S.view='mood';playForView('mood');
   if(mood==='expressionist'){
@@ -331,7 +340,10 @@ function tryPlay(src,name){
   stopSynthMusic();
   const a=$('audio-player');
   if(a.src!==src){a.src=src;a.load();}
-  a.onerror=()=>{updateNP('stream failed · try built-in ancient');toast('that stream would not open here');};
+  a.onerror=()=>{
+    if(activeMusic==='podcast'||a.src!==src||!a.getAttribute('src'))return; // stale/irrelevant error, ignore
+    updateNP('stream failed · try built-in ancient');toast('that stream would not open here');
+  };
   a.play().then(()=>toast('sound started')).catch(()=>{updateNP('tap sound again to allow playback');toast('tap once more to start sound');});
   updateNP(name);
 }
@@ -391,7 +403,8 @@ function stopSynthMusic(){
 
 function stopAmbientMusic(){
   const a=$('audio-player');
-  a.pause();a.src='';
+  a.onerror=null; // clear first — a pending error from the old track must never fire after this point
+  a.pause();a.removeAttribute('src');a.load();
   stopSynthMusic();
 }
 
@@ -410,19 +423,12 @@ function toggleMusic(key){
       const el=document.querySelector(`.music-opt[data-key="podcast"]`);
       if(el)el.classList.add('playing');
       
-      // v01.02: Background playback — only navigate if first time (no episode loaded yet)
-      if(currentEpisode&&ytPlayer){
-        // Episode already selected — play it in background without navigating
-        ytPlayer.playVideo();
-      }else if(S.episodes.length){
-        // First time — need to load an episode, so show the wireless page
+      // v01.06: Background playback — resumes in place if already picked once,
+      // otherwise opens the wireless page so the user can pick an episode.
+      const result=startPodcastFromMusicBar();
+      if(result===false){
         showPage('wireless');
-        // v01.03: Try to resume last episode user was listening to, otherwise start with newest
-        if(!loadLastPodcastEpisode()){
-          loadEpisode(S.episodes[0]);
-        }
-      }else{
-        // No episodes exist
+      }else if(result===null){
         updateNP('🎙 add an episode first');
         toast('no episodes yet — add one below');
       }
@@ -435,7 +441,7 @@ function toggleMusic(key){
   const a=$('audio-player');
   if(activeMusic===key){
     // clicking same track → stop
-    a.pause();a.src='';
+    a.pause();a.removeAttribute('src');a.load();
     stopSynthMusic();
     activeMusic=null;
     updateNP('nothing playing · tap to start');
@@ -443,7 +449,7 @@ function toggleMusic(key){
   } else {
     activeMusic=key;
     const t=MUSIC[key];
-    if(t&&t.builtIn){a.pause();a.src='';startAncientSynth();}
+    if(t&&t.builtIn){a.pause();a.removeAttribute('src');a.load();startAncientSynth();}
     else if(t)tryPlay(t.src,t.name);
     document.querySelectorAll('.music-opt').forEach(o=>o.classList.remove('playing'));
     const el=document.querySelector(`.music-opt[data-key="${key}"]`);
@@ -456,32 +462,8 @@ function openMusicModal(){$('music-modal').classList.add('open');}
 function closeMusicModal(){$('music-modal').classList.remove('open');}
 
 // ═══ ADMIN MODE ═══
-function tryAdminUnlock(){
-  const val=$('admin-pw-input').value.trim().toLowerCase();
-  if(val===ADMIN_PW){
-    S.adminUnlocked=true;
-    $('admin-locked').style.display='none';
-    $('admin-unlocked').style.display='block';
-    $('admin-pw-input').value='';
-    $('admin-wrong').textContent='';
-    updateAdminUI();
-    toast('admin unlocked');
-  }else{
-    $('admin-pw-input').classList.add('wrong');
-    $('admin-wrong').textContent='wrong password';
-    setTimeout(()=>$('admin-pw-input').classList.remove('wrong'),420);
-    $('admin-pw-input').value='';
-  }
-}
-function lockAdmin(){
-  S.adminUnlocked=false;
-  $('admin-locked').style.display='flex';
-  $('admin-unlocked').style.display='none';
-  $('admin-pw-input').value='';
-  $('admin-wrong').textContent='';
-  updateAdminUI();
-  toast('admin locked');
-}
+// (unlock/lock now handled by handleAdminLoginProfile/handleAdminLogoutProfile
+// in the profile panel — see below. This just toggles admin-only UI site-wide.)
 function updateAdminUI(){
   // Show/hide admin controls on episodes, posts, notes, etc.
   document.querySelectorAll('.wp-ep-admin, .admin-controls, .rec-admin, .post-admin, .note-admin, .scream-admin, .lib-admin').forEach(el=>{
@@ -1071,16 +1053,12 @@ function mCompass(ctx,x,y){
   ctx.restore();
 }
 
-// ═══ POPUP — closes on outside tap ═══
-function togglePopup(){$('nosirt-popup').classList.toggle('open');}
+// ═══ PROFILE PANEL — closes on outside tap ═══
 document.addEventListener('click',e=>{
-  if(!e.target.closest('#nosirt-figure')&&!e.target.closest('#nosirt-popup'))
-    $('nosirt-popup').classList.remove('open');
+  const panel=$('profile-panel');
+  if(panel&&panel.style.display!=='none'&&!e.target.closest('#profile-icon')&&!e.target.closest('#profile-panel'))
+    closeProfilePanel();
 });
-document.addEventListener('touchstart',e=>{
-  if(!e.target.closest('#nosirt-figure')&&!e.target.closest('#nosirt-popup'))
-    $('nosirt-popup').classList.remove('open');
-},{passive:true});
 
 // ═══ STONE NOTE ═══
 function openStoneNote(){$('stone-textarea').value=localStorage.getItem('n_stone')||'';$('stone-note').classList.add('open');}
@@ -1135,7 +1113,7 @@ window.addEventListener('load',()=>{
   // Use fitMap so the whole map is visible and centered
   setTimeout(()=>{fitMap();},50);
   // Bind element-specific listeners safely after DOM confirmed ready
-  const _nfEl2=$('nosirt-figure');
+  const _nfEl2=$('profile-icon');
   if(_nfEl2)_nfEl2.addEventListener('click',()=>{
     nTaps++;clearTimeout(nTimer);nTimer=setTimeout(()=>nTaps=0,2000);
     if(nTaps>=5){nTaps=0;toast('the wanderer returns...');setTimeout(showMap,800);}
@@ -1144,175 +1122,6 @@ window.addEventListener('load',()=>{
 window.addEventListener('resize',()=>{
   const cv=$('sparkle-canvas');if(cv){cv.width=window.innerWidth;cv.height=window.innerHeight;}
   if(S.view==='map'){fitMap();updatePinOverlay();}
-});
-
-// ═══════════════════════════════════════════════════════════
-// v01.04 — About Modal, Admin Panel, Finalization
-// ═══════════════════════════════════════════════════════════
-
-// v01.04: Toggle admin panel visibility
-function toggleAdminPanel() {
-  const panel = $('admin-drag-panel');
-  if (!panel) return;
-  panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
-}
-
-// v01.04: Show admin panel (called on startup or when needed)
-function showAdminPanel() {
-  const panel = $('admin-drag-panel');
-  if (panel) panel.style.display = 'flex';
-}
-
-// v01.04: Hide admin panel
-function hideAdminPanel() {
-  const panel = $('admin-drag-panel');
-  if (panel) panel.style.display = 'none';
-}
-function showAboutModal() {
-  const modal = $('about-modal');
-  const versionList = $('version-list-modal');
-  
-  modal.style.display = 'flex';
-  
-  // Populate version history
-  versionList.innerHTML = '';
-  VERSION_HISTORY.forEach((v, idx) => {
-    const item = document.createElement('div');
-    item.style.cssText = `
-      background: rgba(200,137,42,${idx === 0 ? '.12' : '.05'});
-      border: 1px solid rgba(200,137,42,${idx === 0 ? '.25' : '.15'});
-      border-radius: 8px;
-      padding: 10px;
-      margin-bottom: 8px;
-      cursor: pointer;
-      transition: all .2s;
-    `;
-    
-    const isLatest = idx === 0 ? ' ★ latest' : '';
-    item.innerHTML = `
-      <div style="font-family:'Cinzel Decorative',serif;font-size:.85rem;color:var(--amber);margin-bottom:4px">v${v.version}${isLatest}</div>
-      <div style="font-size:.7rem;color:var(--fog);opacity:.6;margin-bottom:6px">${v.date}</div>
-      <div style="font-size:.75rem;color:var(--cream);line-height:1.5">
-        ${v.changes.map(ch => `• ${ch}`).join('<br>')}
-      </div>
-    `;
-    
-    item.addEventListener('mouseover', () => {
-      item.style.background = `rgba(200,137,42,${idx === 0 ? '.2' : '.12'})`;
-      item.style.borderColor = 'rgba(200,137,42,.35)';
-    });
-    item.addEventListener('mouseout', () => {
-      item.style.background = `rgba(200,137,42,${idx === 0 ? '.12' : '.05'})`;
-      item.style.borderColor = `rgba(200,137,42,${idx === 0 ? '.25' : '.15'})`;
-    });
-    
-    versionList.appendChild(item);
-  });
-}
-
-function closeAboutModal() {
-  $('about-modal').style.display = 'none';
-}
-
-function toggleVersionList() {
-  const list = $('version-list-modal');
-  const arrow = $('version-toggle-arrow');
-  const isHidden = list.style.display === 'none';
-  list.style.display = isHidden ? 'block' : 'none';
-  arrow.style.transform = isHidden ? 'rotate(180deg)' : 'rotate(0deg)';
-  arrow.style.transition = 'transform .3s ease';
-}
-
-// v01.04: Admin login functions
-function handleAdminLogin() {
-  const username = $('admin-username').value.trim();
-  const password = $('admin-password').value.trim();
-  const errorDiv = $('admin-login-error');
-
-  if (username === 'admin' && password === 'admin') {
-    S.adminUnlocked = true;
-    errorDiv.textContent = '';
-    $('admin-username').value = '';
-    $('admin-password').value = '';
-    $('admin-login-form').style.display = 'none';
-    $('admin-unlocked-view').style.display = 'block';
-    toast('admin mode unlocked');
-    document.querySelectorAll('.lib-admin, .wp-ep-admin, .admin-controls').forEach(el => {
-      el.classList.add('show');
-    });
-  } else {
-    errorDiv.textContent = 'wrong username or password';
-  }
-}
-
-function handleAdminLogout() {
-  S.adminUnlocked = false;
-  $('admin-username').value = '';
-  $('admin-password').value = '';
-  $('admin-unlocked-view').style.display = 'none';
-  $('admin-login-form').style.display = 'flex';
-  toast('admin locked');
-  document.querySelectorAll('.lib-admin, .wp-ep-admin, .admin-controls').forEach(el => {
-    el.classList.remove('show');
-  });
-}
-
-// v01.04: Draggable admin panel setup
-function initDragPanel() {
-  const panel = $('admin-drag-panel');
-  const handle = $('drag-handle');
-  let isDragging = false;
-  let startX = 0, startY = 0;
-
-  const saved = localStorage.getItem('n_drag_panel_pos');
-  if (saved) {
-    const pos = JSON.parse(saved);
-    if (pos.right) panel.style.right = pos.right + 'px';
-    if (pos.bottom) panel.style.bottom = pos.bottom + 'px';
-    if (pos.left) panel.style.left = pos.left + 'px';
-    if (pos.top) panel.style.top = pos.top + 'px';
-  }
-
-  handle.addEventListener('pointerdown', (e) => {
-    isDragging = true;
-    const rect = panel.getBoundingClientRect();
-    startX = e.clientX - rect.left;
-    startY = e.clientY - rect.top;
-  });
-
-  document.addEventListener('pointermove', (e) => {
-    if (!isDragging) return;
-    const x = e.clientX - startX;
-    const y = e.clientY - startY;
-    panel.style.left = x + 'px';
-    panel.style.top = y + 'px';
-    panel.style.right = 'auto';
-    panel.style.bottom = 'auto';
-  });
-
-  document.addEventListener('pointerup', () => {
-    if (isDragging) {
-      isDragging = false;
-      const pos = {
-        left: panel.style.left,
-        top: panel.style.top,
-        right: panel.style.right,
-        bottom: panel.style.bottom
-      };
-      localStorage.setItem('n_drag_panel_pos', JSON.stringify(pos));
-    }
-  });
-
-  panel.style.display = 'flex';
-}
-
-// v01.04: Initialize on load
-window.addEventListener('DOMContentLoaded', () => {
-  setTimeout(() => {
-    if (typeof initDragPanel === 'function') {
-      initDragPanel();
-    }
-  }, 100);
 });
 
 // ═══════════════════════════════════════════════════════════
@@ -1407,9 +1216,8 @@ async function handleAdminLoginProfile() {
     $('profile-bio-edit-btn').style.display = 'block';
     loadChangelogIfAdmin();
     toast('admin mode unlocked');
-    document.querySelectorAll('.lib-admin, .wp-ep-admin, .admin-controls').forEach(el => {
-      el.classList.add('show');
-    });
+    updateAdminUI();
+    renderEpisodes(); // refresh so wp-ep-admin edit/delete buttons show immediately
   } else {
     errorDiv.textContent = 'wrong username or password';
   }
@@ -1425,35 +1233,51 @@ function handleAdminLogoutProfile() {
   $('profile-changelog').style.display = 'none';
   cancelBioEdit();
   toast('admin locked');
-  document.querySelectorAll('.lib-admin, .wp-ep-admin, .admin-controls').forEach(el => {
-    el.classList.remove('show');
-  });
+  updateAdminUI();
+  if(typeof renderEpisodes==='function')renderEpisodes();
 }
 
 function initProfileIconDraggable() {
   const icon = $('profile-icon');
   const panel = $('profile-panel');
   let isDragging = false;
+  let moved = false;
   let startX = 0, startY = 0;
 
-  // Click to open panel
-  icon.addEventListener('click', (e) => {
-    if (!isDragging) {
-      openProfilePanel();
-    }
+  // v01.06: keep the icon fully inside the app frame — never let it
+  // drag off past the edges of the map square itself.
+  function clamp(x, y) {
+    const w = icon.offsetWidth || 40;
+    const h = icon.offsetHeight || 56;
+    const pad = 6; // small breathing room from the very edge
+    const maxX = window.innerWidth - w - pad;
+    const maxY = window.innerHeight - h - pad;
+    return {
+      x: Math.max(pad, Math.min(x, maxX)),
+      y: Math.max(pad, Math.min(y, maxY))
+    };
+  }
+
+  // Click to open panel (only if it wasn't a drag)
+  icon.addEventListener('click', () => {
+    if (!moved) openProfilePanel();
   });
 
-  // Dragging
   icon.addEventListener('pointerdown', (e) => {
     isDragging = true;
-    startX = e.clientX - icon.getBoundingClientRect().left;
-    startY = e.clientY - icon.getBoundingClientRect().top;
+    moved = false;
+    const rect = icon.getBoundingClientRect();
+    startX = e.clientX - rect.left;
+    startY = e.clientY - rect.top;
+    icon.setPointerCapture && icon.setPointerCapture(e.pointerId);
   });
 
   document.addEventListener('pointermove', (e) => {
     if (!isDragging) return;
-    const x = e.clientX - startX;
-    const y = e.clientY - startY;
+    moved = true;
+    const rawX = e.clientX - startX;
+    const rawY = e.clientY - startY;
+    const { x, y } = clamp(rawX, rawY);
     icon.style.position = 'fixed';
     icon.style.left = x + 'px';
     icon.style.top = y + 'px';
@@ -1464,20 +1288,36 @@ function initProfileIconDraggable() {
   document.addEventListener('pointerup', () => {
     if (isDragging) {
       isDragging = false;
-      const pos = {
-        left: icon.style.left,
-        top: icon.style.top
-      };
-      localStorage.setItem('n_profile_icon_pos', JSON.stringify(pos));
+      if (moved) {
+        const pos = { left: icon.style.left, top: icon.style.top };
+        localStorage.setItem('n_profile_icon_pos', JSON.stringify(pos));
+      }
+      // small delay so the click handler above can see the final `moved` state
+      setTimeout(() => { moved = false; }, 50);
     }
   });
 
-  // Restore position
+  // Re-clamp on resize/orientation change so it can never end up stuck
+  // off-screen after the viewport changes size.
+  window.addEventListener('resize', () => {
+    const rect = icon.getBoundingClientRect();
+    const { x, y } = clamp(rect.left, rect.top);
+    if (icon.style.left) {
+      icon.style.left = x + 'px';
+      icon.style.top = y + 'px';
+    }
+  });
+
+  // Restore position (clamped, in case the viewport is smaller now than
+  // when the position was saved — e.g. switched from desktop to mobile)
   const saved = localStorage.getItem('n_profile_icon_pos');
   if (saved) {
     const pos = JSON.parse(saved);
-    icon.style.left = pos.left;
-    icon.style.top = pos.top;
+    const savedX = parseFloat(pos.left) || 0;
+    const savedY = parseFloat(pos.top) || 0;
+    const { x, y } = clamp(savedX, savedY);
+    icon.style.left = x + 'px';
+    icon.style.top = y + 'px';
     icon.style.right = 'auto';
     icon.style.bottom = 'auto';
   }

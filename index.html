@@ -44,6 +44,9 @@
 <div id="music-bar">
   <div class="waveform"><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div></div>
   <div class="music-now"><span id="now-playing-text">tap sounds · Ancient ambience is built in</span></div>
+  <div id="wireless-live-badge" class="wireless-badge" onclick="handleLiveBadgeClick()" title="the wireless — tap to browse episodes">
+    <span class="wireless-badge-dot"></span><span class="live-badge-text">podcast</span>
+  </div>
   <button class="music-btn" onclick="openMusicModal()">change ♪</button>
 </div>
 
@@ -54,7 +57,6 @@
   <div id="map-viewport" style="position:absolute;inset:0;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none;">
     <canvas id="map-canvas" style="position:absolute;top:0;left:0;image-rendering:auto;"></canvas>
   </div>
-  <div id="map-hint">drag the realm · pinch or scroll to zoom · tap a glowing place</div>
   <div id="map-tools" aria-label="map controls">
     <div id="map-readout">the living map</div>
     <div class="map-tool-row">
@@ -247,27 +249,73 @@
 
     <div class="wp-header-controls">
       <button class="wp-mode-label" id="wp-mode-toggle" onclick="toggleWaveVideo()" title="Toggle between waveform and video view">
-        <span class="wp-mode-icon">🌊</span> <span class="wp-mode-text">waveform</span>
+        <svg class="wp-icon wp-mode-icon-wave" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="10" width="3" height="4" rx="1.5"/><rect x="8" y="5" width="3" height="14" rx="1.5"/><rect x="14" y="2" width="3" height="20" rx="1.5"/><rect x="20" y="8" width="2.5" height="8" rx="1.25"/></svg>
+        <svg class="wp-icon wp-mode-icon-video" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="display:none"><path d="M4 6a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v2.3l4.3-2.5a1 1 0 0 1 1.5.87v10.66a1 1 0 0 1-1.5.87L15 15.7V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6z"/></svg>
+        <span class="wp-mode-text">podcast</span>
       </button>
     </div>
 
-    <div id="wp-stage" class="wp-stage mode-wave">
+    <div id="wp-stage" class="wp-stage mode-wave is-paused">
       <div id="wp-placeholder" class="wp-placeholder">pick an episode below to begin →</div>
       <div id="wp-yt-wrap" class="wp-yt-wrap"><div id="yt-player"></div></div>
-      <canvas id="wp-wave" class="wp-wave"></canvas>
+
+      <!-- v01.07: album-art style tile — the "audio only" visual, wave mode only -->
+      <div id="wp-art-tile" class="wp-art-tile">
+        <canvas id="wp-wave" class="wp-wave"></canvas>
+      </div>
+
+      <!-- fullscreen/theater — video mode only -->
+      <div id="wp-video-controls" class="wp-video-controls" style="display:none">
+        <button class="wp-mini-btn" onclick="toggleTheater()" title="theater mode">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="10" rx="2"/></svg>
+        </button>
+        <button class="wp-mini-btn" onclick="toggleFullscreen()" title="fullscreen">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+        </button>
+      </div>
+
+      <!-- center play button — shown when nothing is playing -->
+      <button id="wp-center-play" class="wp-center-play" aria-label="play" style="display:flex">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.87l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z"/></svg>
+      </button>
+
       <div id="wp-controls" class="wp-controls">
         <div class="wp-now-title" id="wp-now-title"></div>
-        <div class="wp-seekbar" id="wp-seekbar">
-          <div class="wp-seek-fill" id="wp-seek-fill"></div>
-          <div class="wp-seek-handle" id="wp-seek-handle"></div>
-        </div>
-        <div class="wp-time-row">
-          <span id="wp-time-cur">0:00</span><span id="wp-time-dur">0:00</span>
-        </div>
+
         <div class="wp-btn-row">
-          <button class="wp-btn" id="wp-back" aria-label="back 10 seconds">⟲<span class="wp-btn-sub">10</span></button>
-          <button class="wp-btn wp-btn-main" id="wp-playpause" aria-label="play or pause">▶</button>
-          <button class="wp-btn" id="wp-fwd" aria-label="forward 10 seconds"><span class="wp-btn-sub">10</span>⟳</button>
+          <button class="wp-btn" id="wp-back" aria-label="back 10 seconds">
+            <svg class="wp-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 1 2.6 5.9"/><path d="M4 7.5V12h4.5"/></svg>
+            <span class="wp-btn-sub">10</span>
+          </button>
+          <button class="wp-btn" id="wp-prev" onclick="prevEpisode()" aria-label="previous episode">
+            <svg class="wp-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M7 6a1 1 0 0 1 2 0v12a1 1 0 0 1-2 0V6zm3.5 5.13 8.4-5.93A1 1 0 0 1 20.5 6v12a1 1 0 0 1-1.6.8l-8.4-5.93a1 1 0 0 1 0-1.74z"/></svg>
+          </button>
+          <button class="wp-btn wp-btn-main" id="wp-playpause" aria-label="play or pause">
+            <svg class="wp-icon wp-icon-play" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.87l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z"/></svg>
+            <svg class="wp-icon wp-icon-pause" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="display:none"><rect x="6" y="5" width="4.5" height="14" rx="1.5"/><rect x="13.5" y="5" width="4.5" height="14" rx="1.5"/></svg>
+          </button>
+          <button class="wp-btn" id="wp-next" onclick="nextEpisode()" aria-label="next episode">
+            <svg class="wp-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M17 6a1 1 0 0 0-2 0v12a1 1 0 0 0 2 0V6zm-3.5 5.13L5.1 5.2A1 1 0 0 0 3.5 6v12a1 1 0 0 0 1.6.8l8.4-5.93a1 1 0 0 0 0-1.74z"/></svg>
+          </button>
+          <button class="wp-btn" id="wp-fwd" aria-label="forward 10 seconds">
+            <svg class="wp-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 0-2.6 5.9"/><path d="M20 7.5V12h-4.5"/></svg>
+            <span class="wp-btn-sub">10</span>
+          </button>
+        </div>
+
+        <div class="wp-seek-row">
+          <span class="wp-time" id="wp-time-cur">0:00</span>
+          <div class="wp-seekbar" id="wp-seekbar">
+            <div class="wp-seek-fill" id="wp-seek-fill"></div>
+            <div class="wp-seek-handle" id="wp-seek-handle"></div>
+          </div>
+          <span class="wp-time" id="wp-time-dur">0:00</span>
+        </div>
+
+        <!-- volume — video mode only, wave/mini mode has no room for it -->
+        <div class="wp-volume-row" id="wp-volume-row">
+          <svg class="wp-icon" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+          <input type="range" id="wp-volume" class="wp-volume-slider" min="0" max="100" value="100" aria-label="volume">
         </div>
       </div>
     </div>
@@ -304,20 +352,6 @@
     <button class="nav-btn" onclick="showPage('wireless')" id="nav-wireless"><span class="btn-icon">🎙</span>wireless</button>
     <button class="nav-btn" onclick="showMap()" id="nav-map"><span class="btn-icon">🗺</span>map</button>
   </div>
-</div>
-
-<!-- NOSIRT FIGURE (draggable, opens About) -->
-<div id="nosirt-figure" onclick="showAboutModal()" title="click for about / version history" style="cursor:help;">
-  <svg width="36" height="52" viewBox="0 0 36 52" xmlns="http://www.w3.org/2000/svg">
-    <path d="M10,22 Q8,36 9,50 L27,50 Q28,36 26,22 Q22,20 18,20 Q14,20 10,22Z" fill="#2a1a0a" stroke="rgba(200,137,42,.4)" stroke-width=".8"/>
-    <path d="M18,22 L18,50" stroke="rgba(200,137,42,.18)" stroke-width=".5"/>
-    <path d="M9,30 Q6,34 5,42" stroke="rgba(200,137,42,.28)" stroke-width="1" fill="none"/>
-    <path d="M27,30 Q30,34 31,42" stroke="rgba(200,137,42,.28)" stroke-width="1" fill="none"/>
-    <ellipse cx="18" cy="13" rx="8" ry="9" fill="#2a1a0a" stroke="rgba(200,137,42,.4)" stroke-width=".8"/>
-    <rect x="10" y="5" width="16" height="2.5" rx="1" fill="#1a0e05" stroke="rgba(200,137,42,.4)" stroke-width=".6"/>
-    <rect x="12" y="1" width="12" height="5" rx="2" fill="#1a0e05" stroke="rgba(200,137,42,.4)" stroke-width=".6"/>
-    <circle cx="15" cy="13" r="1.2" fill="rgba(200,137,42,.6)"/><circle cx="21" cy="13" r="1.2" fill="rgba(200,137,42,.6)"/>
-  </svg>
 </div>
 
 <!-- v01.05: PROFILE ICON (draggable, houses everything) -->
@@ -542,69 +576,3 @@
 
 </body>
 </html>
-
-<!-- v01.05: PODCAST PLAYER UI (wave/video modes) -->
-<div id="wireless-view" style="display:none;position:absolute;inset:0;flex-direction:column;background:radial-gradient(ellipse at 30% 20%,#1a1208 0%,#0a0806 100%);z-index:10">
-  <!-- Header -->
-  <div style="padding:12px 16px;border-bottom:1px solid rgba(200,137,42,.15);display:flex;align-items:center;gap:10px;flex-shrink:0">
-    <button onclick="closeWireless()" style="background:transparent;border:none;color:var(--amber);font-family:'IM Fell English',serif;font-style:italic;font-size:.8rem;cursor:pointer;flex-shrink:0">← back</button>
-    <div style="flex:1;overflow:hidden">
-      <div id="wp-now-title" style="font-family:'Cinzel Decorative',serif;font-size:.82rem;color:var(--cream);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
-      <div id="wp-meta" style="font-family:'IM Fell English',serif;font-style:italic;font-size:.7rem;color:var(--amber);opacity:.7;margin-top:1px"></div>
-    </div>
-  </div>
-
-  <!-- v01.05: WAVE MODE (default, collapsed) -->
-  <div id="wp-wave-container" style="padding:16px;display:flex;flex-direction:column;gap:12px;flex-shrink:0">
-    <!-- Styled progress bar -->
-    <div class="wp-progress-bar" onclick="seekToProgress(event)" style="cursor:pointer">
-      <div id="wp-progress-fill" class="wp-progress-fill"></div>
-    </div>
-
-    <!-- Controls -->
-    <div class="wp-controls">
-      <button class="wp-btn" onclick="prevEpisode()">⏮ prev</button>
-      <button class="wp-btn" onclick="skipBackward()">⏪ -10s</button>
-      <button id="wp-play-btn" class="wp-btn" onclick="toggleWaveMode()">▶ play latest</button>
-      <button class="wp-btn" onclick="skipForward()">⏩ +10s</button>
-      <button class="wp-btn" onclick="nextEpisode()">⏭ next</button>
-      <button id="wp-mode-toggle" onclick="toggleWaveMode()" title="switch to video mode">📺</button>
-    </div>
-  </div>
-
-  <!-- v01.05: VIDEO MODE -->
-  <div id="wp-video-container" style="display:none;padding:16px;flex:1;overflow:auto">
-    <div id="yt-player" style="width:100%;aspect-ratio:16/9;border-radius:8px;background:rgba(0,0,0,.9)"></div>
-    
-    <div class="wp-controls" style="margin-top:12px">
-      <button class="wp-btn" onclick="prevEpisode()">⏮ prev</button>
-      <button class="wp-btn" onclick="skipBackward()">⏪ -10s</button>
-      <button class="wp-btn" onclick="skipForward()">⏩ +10s</button>
-      <button class="wp-btn" onclick="nextEpisode()">⏭ next</button>
-      <button class="wp-btn" onclick="toggleFullscreen()">⛶ fullscreen</button>
-      <button id="wp-mode-toggle" onclick="toggleWaveMode()" title="switch to wave mode">🌊</button>
-    </div>
-  </div>
-
-  <!-- Episode list -->
-  <div style="flex:1;overflow-y:auto;padding:16px;border-top:1px solid rgba(200,137,42,.15)">
-    <div style="font-family:'Cinzel Decorative',serif;font-size:.85rem;color:var(--amber);margin-bottom:12px">episodes</div>
-    <div id="episode-list" style="display:flex;flex-direction:column;gap:12px"></div>
-  </div>
-
-  <!-- Add episode (admin) -->
-  <div style="padding:12px 16px;border-top:1px solid rgba(200,137,42,.15);flex-shrink:0">
-    <div id="wireless-admin">
-      <button class="admin-btn edit" onclick="toggleAddEpisode()">+ episode</button>
-    </div>
-    <div id="add-episode-panel" style="display:none;margin-top:12px;background:rgba(20,15,10,.55);border:1px solid rgba(200,137,42,.18);border-radius:12px;padding:12px;gap:8px">
-      <input class="sq-input" id="ep-pw" type="password" placeholder="password..." style="margin:0">
-      <input class="sq-input" id="ep-title" placeholder="episode title" style="margin:0">
-      <input class="sq-input" id="ep-yt" placeholder="YouTube video ID" style="margin:0">
-      <div style="display:flex;gap:6px">
-        <button class="sq-submit" onclick="publishEpisode()" style="flex:1">add →</button>
-        <button class="sq-cancel" onclick="toggleAddEpisode()">cancel</button>
-      </div>
-    </div>
-  </div>
-</div>
