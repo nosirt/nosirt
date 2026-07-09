@@ -26,6 +26,8 @@ function onYouTubeIframeAPIReady(){
   if(pendingVideoId)createPlayer(pendingVideoId);
 }
 
+let pendingSeekSeconds=null;
+
 function createPlayer(videoId){
   if(!ytApiReady){pendingVideoId=videoId;return;}
   if(ytPlayer){ytPlayer.loadVideoById(videoId);return;}
@@ -34,8 +36,6 @@ function createPlayer(videoId){
     playerVars:{controls:0,modestbranding:1,rel:0,playsinline:1,cc_load_policy:1,iv_load_policy:3,fs:0},
     events:{
       onReady:()=>{
-        const saved=S.podcastProgress&&currentEpisode&&S.podcastProgress[currentEpisode.id];
-        if(saved&&saved.seconds)ytPlayer.seekTo(saved.seconds,true);
         ytPlayer.playVideo();
         const cp=$('wp-center-play');if(cp)cp.style.display='none';
       },
@@ -56,6 +56,10 @@ function onPlayerStateChange(e){
   const stage=$('wp-stage');
   if(stage){stage.classList.toggle('is-playing',playing);stage.classList.toggle('is-paused',!playing);}
   if(playing){startWave();takeOverMusicForPodcast();}else{stopWave();}
+  if((e.data===3||e.data===1)&&pendingSeekSeconds!=null){
+    ytPlayer.seekTo(pendingSeekSeconds,true);
+    pendingSeekSeconds=null;
+  }
   if(e.data===0)nextEpisode();
   checkLiveStatus(e);
 }
@@ -84,6 +88,8 @@ function loadEpisode(ep){
   currentEpisode=ep;
   $('wp-placeholder').style.display='none';
   $('wp-now-title').textContent=ep.title;
+  const saved=S.podcastProgress&&S.podcastProgress[ep.id];
+  pendingSeekSeconds=(saved&&saved.seconds)?saved.seconds:null;
   if(ytPlayer)ytPlayer.loadVideoById(ep.videoId);
   else{pendingVideoId=ep.videoId;createPlayer(ep.videoId);}
   localStorage.setItem('n_last_podcast_ep',ep.id);
@@ -502,9 +508,10 @@ function updateLiveBadge(){
 
 function handleLiveBadgeClick(){
   const ep=pickDefaultEpisode();
-  if(!ep){goToLocation('wireless');return;} // no episodes exist yet at all
+  if(!ep){navigateTo('wireless');return;} // no episodes exist yet at all
   loadEpisode(ep);
   toast(ep.isLive?('🔴 tuning in live: '+ep.title):('▶ '+ep.title));
+  navigateTo('wireless');
 }
 
 // Safety-net + periodic re-check for whichever episode is currently
@@ -555,9 +562,33 @@ function startPodcastFromMusicBar(){
       ['pointerdown','pointermove'].forEach(ev=>stage.addEventListener(ev,showWpControls));
     }
     const vol=$('wp-volume');
+    let volBeforeMute=100;
     if(vol)vol.addEventListener('input',()=>{
       if(ytPlayer&&typeof ytPlayer.setVolume==='function')ytPlayer.setVolume(+vol.value);
+      updateMuteIcon(+vol.value===0);
     });
+    const muteBtn=$('wp-mute-btn');
+    if(muteBtn)muteBtn.addEventListener('click',()=>{
+      if(!ytPlayer)return;
+      const isMuted=typeof ytPlayer.isMuted==='function'&&ytPlayer.isMuted();
+      if(isMuted){
+        ytPlayer.unMute();
+        ytPlayer.setVolume(volBeforeMute||100);
+        if(vol)vol.value=volBeforeMute||100;
+        updateMuteIcon(false);
+      }else{
+        volBeforeMute=(vol&&+vol.value)||100;
+        ytPlayer.mute();
+        if(vol)vol.value=0;
+        updateMuteIcon(true);
+      }
+    });
+    function updateMuteIcon(muted){
+      const on=muteBtn&&muteBtn.querySelector('.wp-icon-vol-on');
+      const off=muteBtn&&muteBtn.querySelector('.wp-icon-vol-off');
+      if(on)on.style.display=muted?'none':'block';
+      if(off)off.style.display=muted?'block':'none';
+    }
     window.addEventListener('resize',setupWaveCanvas);
     requestAnimationFrame(seekBarUpdateLoop);
     drawWave(0);
@@ -568,3 +599,322 @@ function startPodcastFromMusicBar(){
     setInterval(sweepLiveStatus,3*60*1000);
   });
 })();
+
+/* ============================================================
+   WIRELESS CALENDAR — "book the wireless" (recording slot booking)
+   Public data (dates/times/open-or-taken) lives in Firestore doc
+   nosirt/podcast_calendar and is synced live to every visitor via
+   fbListen — it never contains names.
+   Claimant names live in their own collection, nosirt_podcast_claims,
+   one doc per slot id, and are only ever fetched when S.adminUnlocked
+   is true — a normal visitor's browser never requests that data.
+   (Same client-side trust model the rest of the site already uses
+   for admin-only editing — not a substitute for real auth/Firestore
+   security rules if that data ever needs to be truly locked down.)
+   ============================================================ */
+
+let wcalClaimsCache={};   // slotId -> {name, claimedAt} — populated only for admin
+let wcalSelectedSlotId=null;
+let wcalEditSlotId=null;
+
+// Build `count` upcoming dates matching {day,start,end}, skipping any date
+// whose id is in excludeIds, and skipping today if that start time already passed.
+function generateSlots(pattern,count,excludeIds){
+  excludeIds=excludeIds||new Set();
+  const dayIdx=Number(pattern.day);
+  const out=[];
+  const now=new Date();
+  let d=new Date();d.setHours(0,0,0,0);
+  let guard=0;
+  while(out.length<count && guard<400){
+    guard++;
+    if(d.getDay()===dayIdx){
+      const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');
+      const dateISO=`${y}-${m}-${day}`;
+      const slotStart=new Date(`${dateISO}T${pattern.start}:00`);
+      if(slotStart>now && !excludeIds.has(dateISO)){
+        out.push({
+          id:dateISO,dateISO,
+          day:d.toLocaleDateString('en-US',{weekday:'long'}),
+          dateLabel:d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}),
+          startTime:pattern.start,endTime:pattern.end,status:'open'
+        });
+      }
+    }
+    d.setDate(d.getDate()+1);
+  }
+  return out;
+}
+
+// Create the doc on first-ever use, or top up open slots so the visible
+// window always has `visibleCount` future slots — runs whenever the
+// calendar modal is opened, so it self-heals without admin action.
+async function ensureCalendarTopUp(){
+  if(!db)return;
+  const ref=db.collection('nosirt').doc('podcast_calendar');
+  try{
+    const snap=await ref.get();
+    let data=snap.exists?snap.data():null;
+    if(!data){
+      const pattern={day:2,start:'10:30',end:'11:30'};
+      const visibleCount=4;
+      const slots=generateSlots(pattern,visibleCount,new Set());
+      data={pattern,visibleCount,slots};
+      await ref.set(data);
+      return;
+    }
+    const todayISO=new Date().toISOString().slice(0,10);
+    const future=(data.slots||[]).filter(s=>s.dateISO>=todayISO);
+    const needed=(data.visibleCount||4)-future.length;
+    if(needed>0){
+      const excludeIds=new Set((data.slots||[]).map(s=>s.id));
+      const fresh=generateSlots(data.pattern,needed,excludeIds);
+      const merged=[...future,...fresh].sort((a,b)=>a.dateISO.localeCompare(b.dateISO));
+      await ref.set({...data,slots:merged});
+    }
+  }catch(e){console.warn('calendar top-up error:',e.message);}
+}
+
+function openCalendarModal(){
+  $('wcal-modal').classList.add('open');
+  $('wcal-claim-box').classList.remove('show');
+  closeAdminEdit();
+  ensureCalendarTopUp();
+  if(S.adminUnlocked)loadClaimNamesForAdmin();
+}
+function closeCalendarModal(){
+  $('wcal-modal').classList.remove('open');
+  $('wcal-admin-panel').classList.remove('show');
+}
+
+function renderCalendarGrid(){
+  const grid=$('wcal-grid'),empty=$('wcal-empty');
+  if(!grid)return;
+  const cal=S.calendar;
+  const todayISO=new Date().toISOString().slice(0,10);
+  const slots=((cal&&cal.slots)||[]).filter(s=>s.dateISO>=todayISO).sort((a,b)=>a.dateISO.localeCompare(b.dateISO));
+  if(!slots.length){grid.innerHTML='';empty.style.display='block';return;}
+  empty.style.display='none';
+  const isAdmin=S.adminUnlocked;
+  grid.innerHTML=slots.map(s=>{
+    const claim=isAdmin&&s.status==='taken'?wcalClaimsCache[s.id]:null;
+    const claimLine=isAdmin&&s.status==='taken'
+      ?`<div class="wcal-slot-claimed-name">booked by ${claim?esc(claim.name):'…'}</div>`:'';
+    const adminRow=isAdmin?`<div class="wcal-slot-admin-row">
+        <button class="wcal-mini-btn" onclick="event.stopPropagation();openAdminEdit('${s.id}')">✎ edit</button>
+      </div>`:'';
+    return `<div class="wcal-slot ${s.status}" onclick="onSlotClick('${s.id}')">
+      <div class="wcal-slot-status"></div>
+      <div class="wcal-slot-day">${esc(s.day)}</div>
+      <div class="wcal-slot-date">${esc(s.dateLabel)}</div>
+      <div class="wcal-slot-time">${esc(s.startTime)}–${esc(s.endTime)}</div>
+      ${claimLine}${adminRow}
+    </div>`;
+  }).join('');
+}
+
+function onSlotClick(slotId){
+  const slot=((S.calendar&&S.calendar.slots)||[]).find(s=>s.id===slotId);
+  if(!slot)return;
+  if(slot.status==='taken'){
+    if(S.adminUnlocked)openAdminEdit(slotId);
+    else toast('this slot is already taken');
+    return;
+  }
+  closeAdminEdit();
+  wcalSelectedSlotId=slotId;
+  $('wcal-claim-label').textContent=`your name for ${slot.day}, ${slot.dateLabel}, ${slot.startTime}–${slot.endTime}:`;
+  $('wcal-claim-box').classList.add('show');
+  $('wcal-claim-name').focus();
+}
+
+// Uses a Firestore transaction so two people tapping the same slot at the
+// same moment can't both win it — whoever's write lands first gets it,
+// the other gets bounced back to "taken" with a toast.
+async function submitClaim(){
+  const nameRaw=$('wcal-claim-name').value.trim();
+  if(!nameRaw){toast('enter your name first');return;}
+  if(!wcalSelectedSlotId){return;}
+  if(!db){toast('booking is unavailable right now');return;}
+  const slotId=wcalSelectedSlotId;
+  const ref=db.collection('nosirt').doc('podcast_calendar');
+  let outcome='ok';
+  try{
+    await db.runTransaction(async tx=>{
+      const snap=await tx.get(ref);
+      if(!snap.exists)throw new Error('no calendar doc');
+      const data=snap.data();
+      const slots=data.slots||[];
+      const idx=slots.findIndex(s=>s.id===slotId);
+      if(idx===-1||slots[idx].status!=='open'){outcome='taken';return;}
+      const next=slots.slice();
+      next[idx]={...next[idx],status:'taken'};
+      tx.set(ref,{...data,slots:next});
+    });
+    if(outcome==='taken'){
+      toast('sorry — someone just grabbed that slot');
+      $('wcal-claim-box').classList.remove('show');
+      wcalSelectedSlotId=null;
+      return;
+    }
+    await db.collection('nosirt_podcast_claims').doc(slotId).set({name:filt(nameRaw),claimedAt:Date.now()});
+    toast('slot booked — see you then 🎙');
+    $('wcal-claim-box').classList.remove('show');
+    $('wcal-claim-name').value='';
+    wcalSelectedSlotId=null;
+  }catch(e){
+    console.error('claim error:',e);
+    toast('something went wrong — try again');
+  }
+}
+
+// ── ADMIN: view names, edit/reopen/delete individual slots, bulk pattern ──
+async function loadClaimNamesForAdmin(){
+  if(!db||!S.adminUnlocked)return;
+  try{
+    const snap=await db.collection('nosirt_podcast_claims').get();
+    const cache={};
+    snap.forEach(doc=>{cache[doc.id]=doc.data();});
+    wcalClaimsCache=cache;
+    renderCalendarGrid();
+  }catch(e){console.warn('claim name fetch error:',e.message);}
+}
+
+function toggleCalAdminPanel(){
+  if(!S.adminUnlocked){toast('admin access required');return;}
+  const panel=$('wcal-admin-panel');
+  panel.classList.toggle('show');
+  if(panel.classList.contains('show')&&S.calendar&&S.calendar.pattern){
+    $('wcal-admin-day').value=S.calendar.pattern.day;
+    $('wcal-admin-start').value=S.calendar.pattern.start;
+    $('wcal-admin-end').value=S.calendar.pattern.end;
+    $('wcal-admin-count').value=S.calendar.visibleCount||4;
+  }
+}
+
+// Regenerates every upcoming OPEN slot using the new pattern/count.
+// Slots that are already claimed are left completely untouched.
+async function applyCalPattern(){
+  if(!S.adminUnlocked){toast('admin access required');return;}
+  if(!db)return;
+  const day=Number($('wcal-admin-day').value);
+  const start=$('wcal-admin-start').value;
+  const end=$('wcal-admin-end').value;
+  const count=Math.max(1,Math.min(20,Number($('wcal-admin-count').value)||4));
+  if(!start||!end){toast('set both start and end time');return;}
+  const pattern={day,start,end};
+  const ref=db.collection('nosirt').doc('podcast_calendar');
+  try{
+    const snap=await ref.get();
+    const data=snap.exists?snap.data():{slots:[]};
+    const todayISO=new Date().toISOString().slice(0,10);
+    const claimed=(data.slots||[]).filter(s=>s.dateISO>=todayISO&&s.status==='taken');
+    const excludeIds=new Set(claimed.map(s=>s.id));
+    const needed=Math.max(0,count-claimed.length);
+    const fresh=generateSlots(pattern,needed,excludeIds);
+    const merged=[...claimed,...fresh].sort((a,b)=>a.dateISO.localeCompare(b.dateISO));
+    await ref.set({pattern,visibleCount:count,slots:merged});
+    toast('schedule updated');
+  }catch(e){
+    console.error('pattern apply error:',e);
+    toast('couldn\'t update schedule');
+  }
+}
+
+function openAdminEdit(slotId){
+  if(!S.adminUnlocked)return;
+  const slot=((S.calendar&&S.calendar.slots)||[]).find(s=>s.id===slotId);
+  if(!slot)return;
+  wcalEditSlotId=slotId;
+  $('wcal-claim-box').classList.remove('show');
+  $('wcal-edit-date').value=slot.dateISO;
+  $('wcal-edit-start').value=slot.startTime;
+  $('wcal-edit-end').value=slot.endTime;
+  const claim=wcalClaimsCache[slotId];
+  $('wcal-edit-name').textContent=slot.status==='taken'
+    ?('booked by: '+(claim?claim.name:'…'))
+    :'this slot is currently open';
+  $('wcal-edit-clear-btn').style.display=slot.status==='taken'?'inline-block':'none';
+  $('wcal-edit-box').classList.add('show');
+}
+
+function closeAdminEdit(){
+  wcalEditSlotId=null;
+  const box=$('wcal-edit-box');
+  if(box)box.classList.remove('show');
+}
+
+async function saveSlotEdit(){
+  if(!S.adminUnlocked||!wcalEditSlotId||!db)return;
+  const newDate=$('wcal-edit-date').value;
+  const start=$('wcal-edit-start').value;
+  const end=$('wcal-edit-end').value;
+  if(!newDate||!start||!end){toast('fill in date, start, and end');return;}
+  const ref=db.collection('nosirt').doc('podcast_calendar');
+  try{
+    const snap=await ref.get();
+    const data=snap.data();
+    const idx=(data.slots||[]).findIndex(s=>s.id===wcalEditSlotId);
+    if(idx===-1)return;
+    const old=data.slots[idx];
+    const d=new Date(newDate+'T00:00:00');
+    const updated={...old,id:newDate,dateISO:newDate,
+      day:d.toLocaleDateString('en-US',{weekday:'long'}),
+      dateLabel:d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}),
+      startTime:start,endTime:end};
+    const nextSlots=data.slots.slice();
+    nextSlots[idx]=updated;
+    // If the id (date) changed on a claimed slot, move its name doc too
+    if(newDate!==old.id&&old.status==='taken'){
+      const claimSnap=await db.collection('nosirt_podcast_claims').doc(old.id).get();
+      if(claimSnap.exists){
+        await db.collection('nosirt_podcast_claims').doc(newDate).set(claimSnap.data());
+        await db.collection('nosirt_podcast_claims').doc(old.id).delete();
+      }
+    }
+    await ref.set({...data,slots:nextSlots});
+    toast('slot updated');
+    closeAdminEdit();
+    loadClaimNamesForAdmin();
+  }catch(e){
+    console.error('slot edit error:',e);
+    toast('couldn\'t save that change');
+  }
+}
+
+async function clearSlotClaim(){
+  if(!S.adminUnlocked||!wcalEditSlotId||!db)return;
+  const ref=db.collection('nosirt').doc('podcast_calendar');
+  try{
+    const snap=await ref.get();
+    const data=snap.data();
+    const idx=(data.slots||[]).findIndex(s=>s.id===wcalEditSlotId);
+    if(idx===-1)return;
+    const nextSlots=data.slots.slice();
+    nextSlots[idx]={...nextSlots[idx],status:'open'};
+    await ref.set({...data,slots:nextSlots});
+    await db.collection('nosirt_podcast_claims').doc(wcalEditSlotId).delete().catch(()=>{});
+    toast('slot reopened');
+    closeAdminEdit();
+  }catch(e){
+    console.error('clear claim error:',e);
+    toast('couldn\'t reopen that slot');
+  }
+}
+
+async function deleteSlot(){
+  if(!S.adminUnlocked||!wcalEditSlotId||!db)return;
+  const ref=db.collection('nosirt').doc('podcast_calendar');
+  try{
+    const snap=await ref.get();
+    const data=snap.data();
+    const nextSlots=(data.slots||[]).filter(s=>s.id!==wcalEditSlotId);
+    await ref.set({...data,slots:nextSlots});
+    await db.collection('nosirt_podcast_claims').doc(wcalEditSlotId).delete().catch(()=>{});
+    toast('slot removed');
+    closeAdminEdit();
+  }catch(e){
+    console.error('delete slot error:',e);
+    toast('couldn\'t remove that slot');
+  }
+}

@@ -10,7 +10,10 @@
 
 // ═══ CASTLE ═══
 function openCastle(){$('castle-door').classList.add('open');}
-function closeCastle(){$('castle-door').classList.remove('open');$('castle-input').value='';$('castle-wrong').textContent='';}
+function closeCastle(){
+  $('castle-door').classList.remove('open');$('castle-input').value='';$('castle-wrong').textContent='';
+  if(location.pathname!=='/')history.pushState({},'','/');
+}
 async function tryCastle(){
   const val=$('castle-input').value.trim();
   const ok=await validatePassword('keep_password',val);
@@ -25,6 +28,7 @@ async function tryCastle(){
 }
 function closeInterior(){
   $('castle-interior').classList.remove('open');
+  if(location.pathname!=='/')history.pushState({},'','/');
   // Reset to library view when closing
   setTimeout(()=>{
     $('reader-view').style.display='none';

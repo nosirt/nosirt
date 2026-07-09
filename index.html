@@ -253,6 +253,9 @@
         <svg class="wp-icon wp-mode-icon-video" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="display:none"><path d="M4 6a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v2.3l4.3-2.5a1 1 0 0 1 1.5.87v10.66a1 1 0 0 1-1.5.87L15 15.7V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6z"/></svg>
         <span class="wp-mode-text">podcast</span>
       </button>
+      <div class="wcal-trigger" onclick="openCalendarModal()" title="book a recording slot">
+        <span class="wcal-trigger-dot"></span> book a slot
+      </div>
     </div>
 
     <div id="wp-stage" class="wp-stage mode-wave is-paused">
@@ -312,9 +315,12 @@
           <span class="wp-time" id="wp-time-dur">0:00</span>
         </div>
 
-        <!-- volume — video mode only, wave/mini mode has no room for it -->
+        <!-- volume + mute — available in both wave and video modes -->
         <div class="wp-volume-row" id="wp-volume-row">
-          <svg class="wp-icon" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+          <button class="wp-mute-btn" id="wp-mute-btn" aria-label="mute">
+            <svg class="wp-icon wp-icon-vol-on" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+            <svg class="wp-icon wp-icon-vol-off" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="display:none"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M15.5 9.5l5 5m0-5l-5 5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
+          </button>
           <input type="range" id="wp-volume" class="wp-volume-slider" min="0" max="100" value="100" aria-label="volume">
         </div>
       </div>
@@ -350,7 +356,7 @@
     <button class="nav-btn" onclick="showPage('square')" id="nav-square"><span class="btn-icon">🏚</span>square</button>
     <button class="nav-btn" onclick="showPage('forum')" id="nav-forum"><span class="btn-icon">🗼</span>n/</button>
     <button class="nav-btn" onclick="showPage('wireless')" id="nav-wireless"><span class="btn-icon">🎙</span>wireless</button>
-    <button class="nav-btn" onclick="showMap()" id="nav-map"><span class="btn-icon">🗺</span>map</button>
+    <button class="nav-btn" onclick="navigateTo('')" id="nav-map"><span class="btn-icon">🗺</span>map</button>
   </div>
 </div>
 
@@ -551,6 +557,87 @@
     </div>
   </div>
   <button class="modal-close" onclick="closeMusicModal()">close</button>
+</div>
+
+<!-- WIRELESS CALENDAR — book a recording slot -->
+<div id="wcal-modal">
+  <div class="wcal-panel">
+    <div class="wcal-head">
+      <div>
+        <div class="wcal-title">🎙 book the wireless</div>
+        <div class="wcal-sub">pick an open slot — first come, first served</div>
+      </div>
+      <button class="wcal-close-x" onclick="closeCalendarModal()" aria-label="close">✕</button>
+    </div>
+
+    <div class="wcal-legend">
+      <div class="wcal-legend-item"><span class="wcal-legend-dot open"></span> available</div>
+      <div class="wcal-legend-item"><span class="wcal-legend-dot taken"></span> taken</div>
+      <button class="wcal-admin-toggle" id="wcal-admin-toggle" onclick="toggleCalAdminPanel()">⚙ manage slots</button>
+    </div>
+
+    <div id="wcal-grid" class="wcal-grid"></div>
+    <div id="wcal-empty" class="wcal-empty" style="display:none">no slots yet — check back soon.</div>
+
+    <div id="wcal-claim-box" class="wcal-claim-box">
+      <div class="wcal-claim-label" id="wcal-claim-label">your name for this slot:</div>
+      <div class="wcal-claim-row">
+        <input class="sq-input" id="wcal-claim-name" placeholder="your name..." maxlength="40">
+        <button class="sq-submit" style="width:auto;padding:8px 16px" onclick="submitClaim()">claim →</button>
+      </div>
+    </div>
+
+    <div id="wcal-edit-box" class="wcal-claim-box">
+      <div class="wcal-claim-label" id="wcal-edit-name">edit slot</div>
+      <div class="wcal-admin-row">
+        <label>date</label>
+        <input class="sq-input" type="date" id="wcal-edit-date">
+      </div>
+      <div class="wcal-admin-row">
+        <label>start time</label>
+        <input class="sq-input" type="time" id="wcal-edit-start">
+      </div>
+      <div class="wcal-admin-row">
+        <label>end time</label>
+        <input class="sq-input" type="time" id="wcal-edit-end">
+      </div>
+      <div class="wcal-admin-actions">
+        <button class="sq-submit" style="width:auto;padding:8px 14px" onclick="saveSlotEdit()">save →</button>
+        <button class="wcal-mini-btn" id="wcal-edit-clear-btn" onclick="clearSlotClaim()" style="flex:0 0 auto;padding:8px 12px">reopen slot</button>
+        <button class="wcal-mini-btn danger" onclick="deleteSlot()" style="flex:0 0 auto;padding:8px 12px">remove</button>
+        <button class="wcal-mini-btn" onclick="closeAdminEdit()" style="flex:0 0 auto;padding:8px 12px">cancel</button>
+      </div>
+    </div>
+
+    <div id="wcal-admin-panel" class="wcal-admin-panel">
+      <div class="wcal-admin-title">recurring schedule</div>
+      <div class="wcal-admin-row">
+        <label>day</label>
+        <select class="sq-select" id="wcal-admin-day">
+          <option value="0">Sunday</option><option value="1">Monday</option>
+          <option value="2" selected>Tuesday</option><option value="3">Wednesday</option>
+          <option value="4">Thursday</option><option value="5">Friday</option>
+          <option value="6">Saturday</option>
+        </select>
+      </div>
+      <div class="wcal-admin-row">
+        <label>start time</label>
+        <input class="sq-input" type="time" id="wcal-admin-start" value="10:30">
+      </div>
+      <div class="wcal-admin-row">
+        <label>end time</label>
+        <input class="sq-input" type="time" id="wcal-admin-end" value="11:30">
+      </div>
+      <div class="wcal-admin-row">
+        <label># of slots</label>
+        <input class="sq-input" type="number" id="wcal-admin-count" min="1" max="20" value="4">
+      </div>
+      <div class="wcal-admin-actions">
+        <button class="sq-submit" style="width:auto;padding:8px 16px" onclick="applyCalPattern()">apply to all upcoming →</button>
+      </div>
+      <div class="wcal-admin-note">applying regenerates every unclaimed upcoming slot from today's date using this pattern. slots already claimed are left alone unless you clear them individually below.</div>
+    </div>
+  </div>
 </div>
 
 <div id="toast"></div>

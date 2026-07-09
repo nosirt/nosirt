@@ -470,7 +470,7 @@ button{touch-action:manipulation}
 .wp-wave{position:absolute;inset:0;width:100%;height:100%;}
 
 /* ─── WAVE MODE: compact "now playing" card, video fully hidden ─── */
-.wp-stage.mode-wave{height:96px;}
+.wp-stage.mode-wave{height:120px;}
 .wp-stage.mode-wave .wp-yt-wrap{opacity:0;pointer-events:none;position:absolute;width:1px;height:1px;overflow:hidden;}
 .wp-stage.mode-wave .wp-art-tile{left:12px;top:12px;width:60px;height:60px;}
 .wp-stage.mode-wave .wp-video-controls{display:none !important;}
@@ -481,7 +481,8 @@ button{touch-action:manipulation}
 /* single play control in wave mode lives in the button row — no separate
    overlapping circle on top of the art tile */
 .wp-stage.mode-wave .wp-center-play{display:none !important;}
-.wp-stage.mode-wave .wp-volume-row{display:none !important;}
+.wp-stage.mode-wave .wp-volume-row{display:flex;}
+.wp-stage.mode-wave .wp-volume-slider{flex:0 0 60px;}
 
 /* ─── VIDEO MODE: full embed, classic tap-to-reveal overlay controls ─── */
 .wp-stage.mode-video{aspect-ratio:16/9;height:auto;}
@@ -493,7 +494,6 @@ button{touch-action:manipulation}
   display:flex;flex-direction:column;gap:8px;
   opacity:0;transform:translateY(8px);transition:opacity .25s ease,transform .25s ease;pointer-events:none;}
 .wp-stage.mode-video .wp-controls.show{opacity:1;transform:translateY(0);pointer-events:auto;}
-.wp-stage.mode-video .wp-volume-row{display:flex;}
 /* only one play affordance at a time: while paused, the big center circle
    is the sole control (bar fully hidden, not just faded — no competing
    buttons); once playing, tap reveals the bar (with pause + seek + skip),
@@ -540,7 +540,10 @@ button{touch-action:manipulation}
 .wp-seekbar:hover .wp-seek-handle,.wp-seekbar:active .wp-seek-handle{transform:translateX(-50%) scale(1);}
 
 /* Volume — video mode only, sleek minimal range slider */
-.wp-volume-row{display:none;align-items:center;gap:8px;color:var(--fog);padding-left:2px;}
+.wp-volume-row{display:flex;align-items:center;gap:8px;color:var(--fog);padding-left:2px;}
+.wp-mute-btn{background:none;border:none;color:inherit;cursor:pointer;padding:2px;
+  display:flex;align-items:center;opacity:.75;transition:opacity .15s ease;flex-shrink:0;}
+.wp-mute-btn:hover{opacity:1;}
 .wp-volume-slider{-webkit-appearance:none;appearance:none;flex:0 0 84px;height:3px;border-radius:2px;
   background:rgba(255,255,255,.18);cursor:pointer;}
 .wp-volume-slider::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:10px;border-radius:50%;
@@ -824,7 +827,7 @@ button{touch-action:manipulation}
   }
 
   .wp-stage.mode-wave {
-    height: 90px;
+    height: 112px;
   }
   .wp-stage.mode-wave .wp-art-tile {
     width: 56px; height: 56px;
@@ -845,3 +848,86 @@ button{touch-action:manipulation}
   }
 }
 
+
+/* ============================================================
+   WIRELESS CALENDAR — "book the wireless" scheduling grid
+   ============================================================ */
+.wcal-trigger{display:inline-flex;align-items:center;gap:6px;background:rgba(200,137,42,.12);
+  border:1px solid rgba(200,137,42,.35);border-radius:20px;padding:6px 14px;color:var(--amber);
+  font-family:'IM Fell English',serif;font-style:italic;font-size:.78rem;cursor:pointer;
+  transition:all .2s;}
+.wcal-trigger:hover{background:rgba(200,137,42,.22);border-color:var(--amber);}
+.wcal-trigger-dot{width:6px;height:6px;border-radius:50%;background:#5fc788;box-shadow:0 0 6px rgba(95,199,136,.8);}
+
+#wcal-modal{position:fixed;inset:0;z-index:110;display:none;flex-direction:column;
+  align-items:center;justify-content:flex-start;padding:60px 16px 40px;overflow-y:auto;
+  background:rgba(6,5,8,.86);backdrop-filter:blur(10px);}
+#wcal-modal.open{display:flex;}
+.wcal-panel{width:100%;max-width:480px;background:linear-gradient(180deg,rgba(22,17,14,.92),rgba(11,9,8,.95));
+  border:1px solid rgba(200,137,42,.22);border-radius:16px;padding:22px 20px 26px;
+  box-shadow:0 20px 60px rgba(0,0,0,.5);}
+.wcal-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:4px;}
+.wcal-title{font-family:'Cinzel Decorative',serif;font-size:1.05rem;color:var(--amber);}
+.wcal-sub{font-family:'IM Fell English',serif;font-style:italic;font-size:.78rem;color:var(--fog);margin-bottom:18px;}
+.wcal-close-x{background:transparent;border:none;color:var(--fog);font-size:1.3rem;cursor:pointer;
+  line-height:1;padding:0 4px;transition:color .2s;}
+.wcal-close-x:hover{color:var(--cream);}
+
+.wcal-legend{display:flex;gap:16px;margin-bottom:16px;font-size:.72rem;color:var(--fog);
+  font-family:'Crimson Text',serif;}
+.wcal-legend-item{display:flex;align-items:center;gap:6px;}
+.wcal-legend-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
+.wcal-legend-dot.open{background:#5fc788;box-shadow:0 0 6px rgba(95,199,136,.6);}
+.wcal-legend-dot.taken{background:#d0555a;box-shadow:0 0 6px rgba(208,85,90,.5);}
+
+.wcal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:6px;}
+.wcal-slot{position:relative;border-radius:12px;padding:13px 14px;cursor:pointer;
+  border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);transition:all .18s ease;
+  display:flex;flex-direction:column;gap:3px;}
+.wcal-slot:active{transform:scale(.97);}
+.wcal-slot.open{border-color:rgba(95,199,136,.35);background:rgba(95,199,136,.08);}
+.wcal-slot.open:hover{border-color:#5fc788;background:rgba(95,199,136,.15);}
+.wcal-slot.taken{border-color:rgba(208,85,90,.3);background:rgba(208,85,90,.07);cursor:default;}
+.wcal-slot-day{font-family:'Cinzel Decorative',serif;font-size:.72rem;letter-spacing:.05em;
+  color:var(--cream);text-transform:uppercase;}
+.wcal-slot-date{font-family:'IM Fell English',serif;font-style:italic;font-size:.72rem;color:var(--fog);}
+.wcal-slot-time{font-family:'Crimson Text',serif;font-size:.8rem;color:var(--cream);margin-top:2px;}
+.wcal-slot-status{position:absolute;top:11px;right:11px;width:9px;height:9px;border-radius:50%;}
+.wcal-slot.open .wcal-slot-status{background:#5fc788;box-shadow:0 0 6px rgba(95,199,136,.7);}
+.wcal-slot.taken .wcal-slot-status{background:#d0555a;box-shadow:0 0 6px rgba(208,85,90,.6);}
+.wcal-slot-claimed-name{font-size:.7rem;color:#e0a0a2;font-family:'IM Fell English',serif;
+  font-style:italic;margin-top:3px;}
+.wcal-slot-admin-row{display:flex;gap:6px;margin-top:8px;}
+.wcal-mini-btn{flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
+  border-radius:6px;padding:4px 6px;font-size:.66rem;color:var(--fog);cursor:pointer;
+  font-family:'Crimson Text',serif;transition:all .15s;}
+.wcal-mini-btn:hover{border-color:var(--amber);color:var(--cream);}
+.wcal-mini-btn.danger:hover{border-color:#d0555a;color:#e0a0a2;}
+
+.wcal-claim-box{margin-top:16px;padding:14px;border-radius:10px;background:rgba(200,137,42,.06);
+  border:1px solid rgba(200,137,42,.25);display:none;}
+.wcal-claim-box.show{display:block;}
+.wcal-claim-label{font-family:'IM Fell English',serif;font-style:italic;font-size:.78rem;
+  color:var(--fog);margin-bottom:8px;}
+.wcal-claim-row{display:flex;gap:8px;}
+.wcal-claim-row input{flex:1;}
+
+.wcal-empty{font-family:'IM Fell English',serif;font-style:italic;font-size:.82rem;
+  color:var(--fog);text-align:center;padding:20px 0;}
+
+/* ── admin settings ── */
+.wcal-admin-toggle{display:none;align-items:center;gap:5px;background:transparent;border:1px solid rgba(200,137,42,.3);
+  border-radius:8px;padding:5px 10px;color:var(--amber);font-size:.7rem;cursor:pointer;
+  font-family:'Crimson Text',serif;margin-left:auto;}
+.wcal-admin-toggle.show{display:inline-flex;}
+.wcal-admin-panel{display:none;margin-top:16px;padding:14px;border-radius:10px;
+  background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.1);}
+.wcal-admin-panel.show{display:block;}
+.wcal-admin-title{font-family:'Cinzel Decorative',serif;font-size:.75rem;color:var(--amber);
+  text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;}
+.wcal-admin-row{display:flex;gap:8px;margin-bottom:8px;align-items:center;}
+.wcal-admin-row label{font-size:.7rem;color:var(--fog);flex:0 0 90px;font-family:'Crimson Text',serif;}
+.wcal-admin-row input,.wcal-admin-row select{flex:1;}
+.wcal-admin-actions{display:flex;gap:8px;margin-top:10px;}
+.wcal-admin-note{font-size:.66rem;color:var(--fog);opacity:.65;margin-top:8px;
+  font-family:'IM Fell English',serif;font-style:italic;line-height:1.4;}

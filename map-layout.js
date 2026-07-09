@@ -40,6 +40,14 @@ function enterSite(){
       }
     });
     fbListenStories(items=>{ if(items.length){ S.library=items; localStorage.setItem('n_library',JSON.stringify(S.library)); if(typeof renderBookList==='function')renderBookList(); } });
+    // Podcast booking calendar — public slot list (never contains names)
+    if(typeof fbListen==='function'){
+      fbListen('podcast_calendar', d=>{ S.calendar=d; if(typeof renderCalendarGrid==='function')renderCalendarGrid(); });
+    }
+
+    // v01.10: land directly on the page a shared/bookmarked URL points to
+    const initialPath=currentRoutePath();
+    if(initialPath)navigateTo(initialPath,false);
   },1200);
 }
 
@@ -236,14 +244,44 @@ function bindPointerMap(vp){
   }));
 }
 
+// ═══ v01.10: URL ROUTING ═══
+// Gives each section its own real, shareable URL:
+//   /            → the map
+//   /garden      → the garden
+//   /square      → town square
+//   /tower       → the tower (internal page id is 'forum' — kept for
+//                  backwards compatibility with existing code)
+//   /wireless    → the wireless
+//   /keep        → nosirt's keep (password gate)
+const ROUTE_TO_PAGE={garden:'garden',square:'square',tower:'forum',wireless:'wireless'};
+
+function currentRoutePath(){
+  return location.pathname.replace(/^\/|\/$/g,'').toLowerCase();
+}
+
+// Central router — shows the right view for a path. Pass push:false when
+// responding to the browser's own back/forward (don't add a new entry).
+function navigateTo(path,push){
+  path=(path||'').replace(/^\/|\/$/g,'').toLowerCase();
+  if(push!==false){
+    const url=path?('/'+path):'/';
+    if(location.pathname!==url)history.pushState({path},'',url);
+  }
+  if(path==='keep'){showMap();openCastle();return;}
+  const internal=ROUTE_TO_PAGE[path];
+  if(internal)showPage(internal);else showMap();
+}
+
+window.addEventListener('popstate',()=>{navigateTo(currentRoutePath(),false);});
+
 function goToLocation(loc){
-  if(loc==='castle'){openCastle();return;}
-  showPage(loc);
+  if(loc==='castle'){navigateTo('keep');return;}
+  navigateTo(loc==='forum'?'tower':loc);
 }
 
 // Called from nav buttons — also resets any zoom/pan to sensible defaults
 function navTo(page){
-  showPage(page);
+  navigateTo(page==='forum'?'tower':page);
 }
 
 // ═══ NAV ═══
@@ -466,7 +504,7 @@ function closeMusicModal(){$('music-modal').classList.remove('open');}
 // in the profile panel — see below. This just toggles admin-only UI site-wide.)
 function updateAdminUI(){
   // Show/hide admin controls on episodes, posts, notes, etc.
-  document.querySelectorAll('.wp-ep-admin, .admin-controls, .rec-admin, .post-admin, .note-admin, .scream-admin, .lib-admin').forEach(el=>{
+  document.querySelectorAll('.wp-ep-admin, .admin-controls, .rec-admin, .post-admin, .note-admin, .scream-admin, .lib-admin, .wcal-admin-toggle').forEach(el=>{
     if(S.adminUnlocked)el.classList.add('show');
     else el.classList.remove('show');
   });
@@ -1218,6 +1256,7 @@ async function handleAdminLoginProfile() {
     toast('admin mode unlocked');
     updateAdminUI();
     renderEpisodes(); // refresh so wp-ep-admin edit/delete buttons show immediately
+    if(typeof loadClaimNamesForAdmin==='function')loadClaimNamesForAdmin(); // reveal booking names now that admin is unlocked
   } else {
     errorDiv.textContent = 'wrong username or password';
   }
@@ -1235,6 +1274,10 @@ function handleAdminLogoutProfile() {
   toast('admin locked');
   updateAdminUI();
   if(typeof renderEpisodes==='function')renderEpisodes();
+  wcalClaimsCache={}; // wipe cached booking names from memory on logout
+  if(typeof renderCalendarGrid==='function')renderCalendarGrid();
+  if(typeof closeAdminEdit==='function')closeAdminEdit();
+  if($('wcal-admin-panel'))$('wcal-admin-panel').classList.remove('show');
 }
 
 function initProfileIconDraggable() {
