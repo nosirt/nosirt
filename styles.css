@@ -356,6 +356,16 @@ button{touch-action:manipulation}
 .chat-panel-close{background:transparent;border:none;color:rgba(196,191,176,.5);font-size:.9rem;
   cursor:pointer;padding:10px 12px;flex-shrink:0;}
 
+/* v01.09: who's online */
+.chat-online-row{display:flex;justify-content:center;padding:6px 0;border-bottom:1px solid rgba(200,137,42,.12);flex-shrink:0;}
+.chat-online-btn{background:transparent;border:none;color:rgba(150,220,150,.85);
+  font-family:'IM Fell English',serif;font-style:italic;font-size:.72rem;cursor:pointer;padding:2px 8px;}
+.chat-online-list{display:none;flex-direction:column;gap:4px;max-height:120px;overflow-y:auto;
+  padding:8px 14px;border-bottom:1px solid rgba(200,137,42,.12);flex-shrink:0;background:rgba(255,255,255,.02);}
+.chat-online-list.open{display:flex;}
+.online-user-row{font-family:'Crimson Text',serif;font-size:.8rem;color:var(--fog);}
+.online-you{color:var(--amber);opacity:.8;font-style:italic;}
+
 .chat-tab-body{flex:1;min-height:0;flex-direction:column;overflow:hidden;position:relative;}
 .chat-messages{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;}
 .chat-empty{margin:auto;color:rgba(196,191,176,.4);font-family:'IM Fell English',serif;

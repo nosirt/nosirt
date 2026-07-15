@@ -19,6 +19,13 @@ let chatLastSentAt = 0;
 let chatCleanupDone = false;
 let chatCurrentTab = 'global';
 
+// v01.09: presence / "who's online"
+const PRESENCE_HEARTBEAT_MS = 20 * 1000;
+const ONLINE_THRESHOLD_MS = 45 * 1000; // no heartbeat in this window = offline
+const PRESENCE_STALE_MS = 5 * 60 * 1000; // prune very old docs from Firestore
+let presenceTimer = null;
+let onlineListOpen = false;
+
 // ═══ Live sync hooks (called from map-layout.js enterSite) ═══
 
 function onChatSettingsUpdate(data){
@@ -31,6 +38,72 @@ function onChatMessagesUpdate(items){
   S.chatMessages = items.sort((a,b)=>a.ts-b.ts);
   renderChatMessages();
   updateChatUnreadBadge();
+}
+
+// v01.09: live presence snapshot — stored as-is, filtered by recency at render time
+function onPresenceUpdate(items){
+  S.onlinePresence = items;
+  renderOnlineCount();
+  if(onlineListOpen) renderOnlineList();
+}
+
+// Starts sending a heartbeat as soon as the site is entered (site-wide
+// presence, not gated behind opening the chat panel). Called once from
+// enterSite() in map-layout.js.
+function startPresenceHeartbeat(){
+  const beat = ()=>{
+    fbSavePresence(S.userId, { id:S.userId, num:getChatNum(), ts:Date.now() });
+    // Occasional lazy prune of very stale presence docs (any client can
+    // do this safely — deletes are idempotent).
+    (S.onlinePresence||[]).forEach(p=>{
+      if(Date.now() - p.ts > PRESENCE_STALE_MS) fbDeletePresence(p.id);
+    });
+    renderOnlineCount(); // also re-render on a timer so people quietly expire
+    if(onlineListOpen) renderOnlineList();
+  };
+  beat();
+  presenceTimer = setInterval(beat, PRESENCE_HEARTBEAT_MS);
+  // Best-effort: try to clear our own presence doc when the tab actually closes.
+  // Not guaranteed to fire/complete, but harmless if it doesn't — the
+  // 45s online threshold covers that case regardless.
+  window.addEventListener('pagehide', ()=>{ fbDeletePresence(S.userId); });
+}
+
+function getOnlineUsers(){
+  const cutoff = Date.now() - ONLINE_THRESHOLD_MS;
+  const seen = {};
+  (S.onlinePresence||[]).forEach(p=>{
+    if(p.ts >= cutoff) seen[p.num] = p; // dedupe by display num just in case
+  });
+  return Object.values(seen).sort((a,b)=>a.ts-b.ts);
+}
+
+function renderOnlineCount(){
+  const el = $('chat-online-count');
+  if(!el) return;
+  el.textContent = getOnlineUsers().length;
+}
+
+function toggleOnlineList(){
+  onlineListOpen = !onlineListOpen;
+  const panel = $('chat-online-list');
+  if(!panel) return;
+  panel.classList.toggle('open', onlineListOpen);
+  if(onlineListOpen) renderOnlineList();
+}
+
+function renderOnlineList(){
+  const el = $('chat-online-list');
+  if(!el) return;
+  const users = getOnlineUsers();
+  const myNum = getChatNum();
+  if(!users.length){
+    el.innerHTML = `<div class="chat-empty">no one else is around right now.</div>`;
+    return;
+  }
+  el.innerHTML = users.map(u=>{
+    return `<div class="online-user-row">🟢 user(${esc(u.num)})${u.num===myNum?' <span class="online-you">(you)</span>':''}</div>`;
+  }).join('');
 }
 
 // ═══ Panel open/close/tabs ═══

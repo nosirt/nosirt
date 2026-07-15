@@ -8,6 +8,25 @@
 // ═══ VERSION HISTORY ═══
 const VERSION_HISTORY = [
   {
+    version: '01.10',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'YouTube Data API key added — playlist import in Wireless now works',
+      'FIX: the URL now updates no matter how you arrive at a page — bottom-nav buttons, exiting a mood world, and the music-bar podcast shortcut all used to leave the old URL showing; they now go through the same router the map pins already used',
+      'Lofi Hip Hop now starts automatically as soon as the site is entered, instead of leaving all music off until you pick something',
+      'If a browser blocks that autoplay, it now retries automatically on your first tap/click/keypress anywhere on the page, rather than requiring you to specifically reopen the music menu'
+    ]
+  },
+  {
+    version: '01.09',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'NEW: "who\'s online" in the chat panel — a live count of everyone currently on the site, tap it to see the list of user(#####) names',
+      'Presence is site-wide (tracked as soon as you enter the site, not just while chat is open) and updates automatically as people arrive/leave',
+      '"Online" means a heartbeat was seen in the last 45 seconds — there\'s no true instant-disconnect signal on a static/Firestore-only site, so someone closing a tab drops off within about a minute rather than immediately'
+    ]
+  },
+  {
     version: '01.08',
     date: new Date().toLocaleDateString(),
     changes: [
@@ -272,6 +291,30 @@ function fbGetChatMsgsOnce() {
   }).catch(()=>[]);
 }
 
+// ═══ v01.09: PRESENCE — "who's online" ═══
+// One doc per browser, keyed by userId, overwritten every heartbeat.
+// There's no real "disconnect" event on Firestore (that's a Realtime
+// Database feature), so "online" is inferred client-side as "heartbeat
+// seen in the last ~45s" — see ONLINE_THRESHOLD_MS in chat.js.
+function fbSavePresence(id, data) {
+  if (!db) return;
+  try { db.collection('nosirt_presence').doc(id).set(data); } catch(e) {}
+}
+function fbDeletePresence(id) {
+  if (!db) return;
+  try { db.collection('nosirt_presence').doc(id).delete(); } catch(e) {}
+}
+function fbListenPresence(cb) {
+  if (!db) return;
+  try {
+    db.collection('nosirt_presence').onSnapshot(snap => {
+      const items=[];
+      snap.forEach(doc=>items.push(doc.data()));
+      cb(items);
+    });
+  } catch(e) {}
+}
+
 // Uploads an image for "image upload" chat mode. Enforces type/size
 // client-side (server-side Firestore/Storage rules should mirror this —
 // see storage.rules). Returns {url, path} or null on failure.
@@ -302,7 +345,7 @@ function fbDeleteChatImage(path) {
 // create/select a project → APIs & Services → Library → enable
 // "YouTube Data API v3" → Credentials → Create API Key. Free quota
 // (10,000 units/day) covers this site's usage many times over.
-const YOUTUBE_API_KEY = 'PASTE_YOUR_YOUTUBE_API_KEY_HERE';
+const YOUTUBE_API_KEY = 'AIzaSyBrv5ZR9ylYgxg2BIr8crg24lge0OWzwpI';
 
 // v01.08: Paste a free GIPHY API key here to enable "GIF search" mode in
 // global chat. Get one at https://developers.giphy.com — create a free
@@ -540,6 +583,8 @@ const S={
   chatSettings:{mediaMode:'off'}, // 'off' | 'gif' | 'upload'
   chatMessages:[],
   chatLastSeenTs:Number(localStorage.getItem('n_chat_seen')||0),
+  // v01.09: who's online
+  onlinePresence:[],
 };
 
 function filt(t){let s=t||'';BAD.forEach(w=>{s=s.replace(new RegExp(w,'gi'),'***')});return s;}

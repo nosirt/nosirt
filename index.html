@@ -474,10 +474,10 @@
 <!-- BOTTOM NAV -->
 <div id="bottom-nav" style="display:none">
   <div class="nav-row">
-    <button class="nav-btn" onclick="showPage('garden')" id="nav-garden"><span class="btn-icon">🌿</span>garden</button>
-    <button class="nav-btn" onclick="showPage('square')" id="nav-square"><span class="btn-icon">🏚</span>square</button>
-    <button class="nav-btn" onclick="showPage('forum')" id="nav-forum"><span class="btn-icon">🗼</span>n/</button>
-    <button class="nav-btn" onclick="showPage('wireless')" id="nav-wireless"><span class="btn-icon">🎙</span>wireless</button>
+    <button class="nav-btn" onclick="navTo('garden')" id="nav-garden"><span class="btn-icon">🌿</span>garden</button>
+    <button class="nav-btn" onclick="navTo('square')" id="nav-square"><span class="btn-icon">🏚</span>square</button>
+    <button class="nav-btn" onclick="navTo('forum')" id="nav-forum"><span class="btn-icon">🗼</span>n/</button>
+    <button class="nav-btn" onclick="navTo('wireless')" id="nav-wireless"><span class="btn-icon">🎙</span>wireless</button>
     <button class="nav-btn" onclick="navigateTo('')" id="nav-map"><span class="btn-icon">🗺</span>map</button>
   </div>
 </div>
@@ -565,6 +565,14 @@
       <button id="chat-tabbtn-stone" class="chat-tab-btn" onclick="switchChatTab('stone')">carved in stone</button>
       <button class="chat-panel-close" onclick="closeChatPanel()">✕</button>
     </div>
+
+    <!-- v01.09: who's online -->
+    <div class="chat-online-row">
+      <button id="chat-online-btn" class="chat-online-btn" onclick="toggleOnlineList()">
+        🟢 <span id="chat-online-count">0</span> online
+      </button>
+    </div>
+    <div id="chat-online-list" class="chat-online-list"></div>
 
     <div id="chat-tab-global" class="chat-tab-body" style="display:flex">
       <div id="chat-global-messages" class="chat-messages"></div>

@@ -33,6 +33,14 @@ function enterSite(skipAnim){
     initMap();initMapCanvas();buildWL();buildSur();buildExp();
     renderForumNav();startClock();startCreatures();animateClouds();spawnFigures();
     playForView('map');
+    // v01.10: auto-start Lofi Hip Hop as soon as the site is entered,
+    // instead of leaving all music off until the visitor picks one.
+    // Safe to call unconditionally — toggleMusic() no-ops nothing here
+    // since activeMusic starts null. If the browser blocks autoplay
+    // (e.g. the welcome banner was skipped, so there was no tap to
+    // "unlock" audio), tryPlay()'s fallback below retries on the
+    // visitor's first interaction anywhere on the page.
+    toggleMusic('lofi');
     // Load shared data from Firebase (live-synced across all visitors)
     fbListen('posts', d=>{ S.posts=JSON.parse(d.v||'[]'); renderPosts(); });
     fbListen('recs',  d=>{ S.recs=JSON.parse(d.v||'null')||[]; renderRecs(); });
@@ -43,6 +51,11 @@ function enterSite(skipAnim){
     if(typeof fbListenChatMsgs==='function'){
       fbListenChatMsgs(items=>{ if(typeof onChatMessagesUpdate==='function')onChatMessagesUpdate(items); });
     }
+    // v01.09: presence — "who's online"
+    if(typeof fbListenPresence==='function'){
+      fbListenPresence(items=>{ if(typeof onPresenceUpdate==='function')onPresenceUpdate(items); });
+    }
+    if(typeof startPresenceHeartbeat==='function')startPresenceHeartbeat();
     // v01.07: which worlds/banner are switched on — live-synced so an
     // admin toggle takes effect for everyone immediately.
     fbListen('features', d=>{
@@ -483,7 +496,7 @@ function enterMoodWorld(mood){
 }
 function exitMoodWorld(){
   document.querySelectorAll('.mood-world').forEach(w=>w.classList.remove('active'));
-  showPage('garden');
+  navTo('garden');
 }
 
 // ═══ MUSIC ═══
@@ -497,7 +510,23 @@ function tryPlay(src,name){
     if(activeMusic==='podcast'||a.src!==src||!a.getAttribute('src'))return; // stale/irrelevant error, ignore
     updateNP('stream failed · try built-in ancient');toast('that stream would not open here');
   };
-  a.play().then(()=>toast('sound started')).catch(()=>{updateNP('tap sound again to allow playback');toast('tap once more to start sound');});
+  a.play().then(()=>toast('sound started')).catch(()=>{
+    updateNP('tap anywhere to start sound');
+    // v01.10: browser blocked autoplay (no user-gesture in this call's
+    // history — most commonly because the welcome banner was toggled
+    // off, so there was no tap to "unlock" audio). Retry automatically
+    // the moment the visitor interacts with the page at all, rather
+    // than requiring them to specifically reopen the music menu.
+    const retryPlay=()=>{
+      a.play().then(()=>{ toast('sound started'); updateNP(name); }).catch(()=>{});
+      document.removeEventListener('click',retryPlay);
+      document.removeEventListener('touchstart',retryPlay);
+      document.removeEventListener('keydown',retryPlay);
+    };
+    document.addEventListener('click',retryPlay,{once:true});
+    document.addEventListener('touchstart',retryPlay,{once:true});
+    document.addEventListener('keydown',retryPlay,{once:true});
+  });
   updateNP(name);
 }
 function updateNP(name){$('now-playing-text').textContent=name;}
@@ -583,7 +612,7 @@ function toggleMusic(key){
       const result=startPodcastFromMusicBar();
       if(result===false){
         if(typeof openDefaultShowFromMusicBar==='function')openDefaultShowFromMusicBar();
-        else showPage('wireless');
+        else navTo('wireless');
       }else if(result===null){
         updateNP('🎙 add a video first');
         toast('no episodes yet — add one below');

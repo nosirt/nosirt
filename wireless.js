@@ -660,7 +660,7 @@ function startPodcastFromMusicBar(){
 // the shows-browser home grid.
 function openDefaultShowFromMusicBar(){
   const defaultShow=getDefaultShow();
-  showPage('wireless');
+  navTo('wireless');
   if(defaultShow)setActiveShow(defaultShow.id,{autoplay:false});
 }
 
