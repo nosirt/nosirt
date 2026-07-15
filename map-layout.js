@@ -3,7 +3,7 @@
    Load this AFTER core.js.
    Contains: intro animation, the world map (drag/zoom/canvas
    drawing), page navigation, the music player, the popup/
-   stone-note widgets, the Konami easter egg, and page init.
+   chat-panel widget, the Konami easter egg, and page init.
    ============================================================ */
 
 // ═══ INTRO ═══
@@ -15,10 +15,19 @@
     width:${6+Math.random()*6}px;height:${8+Math.random()*8}px;`;c.appendChild(l);}
 })();
 
-function enterSite(){
-  const intro=$('intro');intro.classList.add('fade-out');
-  setTimeout(()=>{
-    intro.style.display='none';$('app').classList.add('visible');
+// v01.07: guards against entering twice — the early intro-toggle check
+// (below) can race with the visitor's own tap on the intro screen.
+let siteEntered=false;
+
+// Pass skipAnim=true when the welcome banner is toggled off, so the site
+// opens straight to the map with no fade/delay.
+function enterSite(skipAnim){
+  if(siteEntered)return;
+  siteEntered=true;
+  const intro=$('intro');
+  const proceed=()=>{
+    if(intro)intro.style.display='none';
+    $('app').classList.add('visible');
     S.audioStarted=true;
     fbInit();
     initMap();initMapCanvas();buildWL();buildSur();buildExp();
@@ -29,16 +38,22 @@ function enterSite(){
     fbListen('recs',  d=>{ S.recs=JSON.parse(d.v||'null')||[]; renderRecs(); });
     fbListen('notes', d=>{ S.notes=d.v||''; renderNotes(); });
     fbListen('screams',d=>{ S.screams=JSON.parse(d.v||'[]'); renderScreams(); });
-    let autoLiveCheckDone=false;
-    fbListen('episodes',d=>{
-      S.episodes=JSON.parse(d.v||'[]');
-      renderEpisodes();
-      if(typeof updateLiveBadge==='function')updateLiveBadge();
-      if(!autoLiveCheckDone){
-        autoLiveCheckDone=true;
-        if(typeof autoStartLiveIfAny==='function')autoStartLiveIfAny();
-      }
+    // v01.08: global chat — settings (media mode) + messages, both live
+    fbListen('chat_settings', d=>{ if(typeof onChatSettingsUpdate==='function')onChatSettingsUpdate(d); });
+    if(typeof fbListenChatMsgs==='function'){
+      fbListenChatMsgs(items=>{ if(typeof onChatMessagesUpdate==='function')onChatMessagesUpdate(items); });
+    }
+    // v01.07: which worlds/banner are switched on — live-synced so an
+    // admin toggle takes effect for everyone immediately.
+    fbListen('features', d=>{
+      S.featureToggles=Object.assign({garden:true,square:true,forum:true,wireless:true,castle:true,intro:true},JSON.parse(d.v||'{}'));
+      applyFeatureToggles();
+      if(S.adminUnlocked&&typeof renderFeatureToggleList==='function')renderFeatureToggleList();
     });
+    // Wireless "shows" (multi-playlist podcast/video browser) — migrates
+    // any legacy single-podcast episode data into the new model once,
+    // then keeps everything live-synced.
+    if(typeof initWirelessShows==='function')initWirelessShows();
     fbListenStories(items=>{ if(items.length){ S.library=items; localStorage.setItem('n_library',JSON.stringify(S.library)); if(typeof renderBookList==='function')renderBookList(); } });
     // Podcast booking calendar — public slot list (never contains names)
     if(typeof fbListen==='function'){
@@ -48,8 +63,33 @@ function enterSite(){
     // v01.10: land directly on the page a shared/bookmarked URL points to
     const initialPath=currentRoutePath();
     if(initialPath)navigateTo(initialPath,false);
-  },1200);
+  };
+  if(intro&&!skipAnim){
+    intro.classList.add('fade-out');
+    setTimeout(proceed,1200);
+  }else{
+    proceed();
+  }
 }
+
+// v01.07: best-effort check, before the intro even renders, for whether
+// the welcome banner has been switched off in the admin panel. If so,
+// skip straight to the map. If this fails for any reason (offline, no
+// Firebase, etc.) the intro just shows normally — nothing breaks.
+(async function checkIntroToggle(){
+  try{
+    fbInit();
+    if(!db)return;
+    const doc=await db.collection('nosirt').doc('features').get();
+    if(doc.exists){
+      const toggles=JSON.parse(doc.data().v||'{}');
+      if(toggles&&toggles.intro===false){
+        S.featureToggles=Object.assign(S.featureToggles,toggles);
+        enterSite(true);
+      }
+    }
+  }catch(e){ /* fall back to showing the intro as normal */ }
+})();
 
 // ═══ MAP ═══
 const MAP_W=3200,MAP_H=3200;
@@ -144,6 +184,72 @@ function updatePinOverlay(){
   });
   const ro=$('map-readout');
   if(ro)ro.textContent=`${nearest} · ${Math.round(S.mapScale*100)}%`;
+}
+
+// ═══ v01.07: FEATURE TOGGLES ═══
+// Lets admin temporarily switch off a world (or the welcome banner)
+// from the profile panel. Bottom-nav icons for a switched-off world
+// disappear, its map pin gets a 🚧 mark, and tapping the pin shows a
+// note instead of entering. See VERSION_HISTORY / README for details.
+const FEATURE_LABELS={
+  garden:'🌿 garden',square:'🏚 square',forum:'🗼 tower (n/)',
+  wireless:'🎙 wireless',castle:"🏰 nosirt's keep",intro:'🚪 welcome banner'
+};
+const REVIEW_LABELS={
+  garden:'the garden',square:'town square',forum:'the tower',
+  castle:"nosirt's keep",wireless:'the wireless'
+};
+const NAV_TOGGLE_KEYS=['garden','square','forum','wireless'];
+const PIN_TOGGLE_KEYS=['garden','square','forum','castle','wireless'];
+
+// Applies the current S.featureToggles state to the bottom nav + map pins.
+// Safe to call any time (e.g. right after a Firebase sync, or on load).
+function applyFeatureToggles(){
+  NAV_TOGGLE_KEYS.forEach(key=>{
+    const btn=$('nav-'+key);
+    if(btn)btn.style.display=(S.featureToggles[key]===false)?'none':'';
+  });
+  PIN_TOGGLE_KEYS.forEach(key=>{
+    const pin=$('fpin-'+key);
+    if(pin)pin.classList.toggle('pin-disabled',S.featureToggles[key]===false);
+  });
+}
+
+// Renders the checkbox list in the admin panel. Called when admin
+// unlocks, and again whenever a features update comes in from Firebase.
+function renderFeatureToggleList(){
+  const el=$('feature-toggle-list');
+  if(!el)return;
+  el.innerHTML=Object.keys(FEATURE_LABELS).map(key=>{
+    const on=S.featureToggles[key]!==false;
+    return `<label style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:.75rem;color:var(--cream);font-family:'IM Fell English',serif;font-style:italic;cursor:pointer">
+      <span>${FEATURE_LABELS[key]}</span>
+      <input type="checkbox" ${on?'checked':''} onchange="toggleFeature('${key}',this.checked)" style="accent-color:#c8892a;width:16px;height:16px;cursor:pointer">
+    </label>`;
+  }).join('');
+}
+
+// Flips one toggle, saves it (live-synced to every visitor via
+// Firebase), and applies it immediately in this browser too.
+function toggleFeature(key,isOn){
+  if(!S.adminUnlocked){toast('admin access required');return;}
+  S.featureToggles[key]=isOn;
+  fbSave('features',{v:JSON.stringify(S.featureToggles)});
+  applyFeatureToggles();
+  toast(`${(FEATURE_LABELS[key]||key).replace(/^[^\s]+\s/,'')} ${isOn?'switched on':'switched off'}`);
+}
+
+// The "🚧 under temporary review" note shown when tapping a disabled pin
+// or landing on a disabled page's URL directly.
+function showUnderReviewNote(key){
+  const t=$('review-text');
+  if(t)t.textContent=`${REVIEW_LABELS[key]||'this feature'} is under temporary review. check back soon.`;
+  const m=$('review-modal');
+  if(m)m.classList.add('open');
+}
+function closeReviewNote(){
+  const m=$('review-modal');
+  if(m)m.classList.remove('open');
 }
 
 function initMap(){
@@ -267,9 +373,15 @@ function navigateTo(path,push){
     const url=path?('/'+path):'/';
     if(location.pathname!==url)history.pushState({path},'',url);
   }
-  if(path==='keep'){showMap();openCastle();return;}
+  if(path==='keep'){
+    if(S.featureToggles.castle===false){showUnderReviewNote('castle');showMap();return;}
+    showMap();openCastle();return;
+  }
   const internal=ROUTE_TO_PAGE[path];
-  if(internal)showPage(internal);else showMap();
+  if(internal){
+    if(S.featureToggles[internal]===false){showUnderReviewNote(internal);showMap();return;}
+    showPage(internal);
+  }else showMap();
 }
 
 window.addEventListener('popstate',()=>{navigateTo(currentRoutePath(),false);});
@@ -303,14 +415,17 @@ function showPage(page){
   $('mood-back').classList.remove('visible');
   $('bottom-nav').style.display='block';
   $('profile-icon').style.display='block';
-  $('float-note').style.display='flex';
+  $('float-chat').style.display='flex';
   const pg=$('page-'+page);
   if(pg){pg.style.display='flex';pg.classList.add('active');}
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   const nb=$('nav-'+page);if(nb)nb.classList.add('active');
   S.view=page;playForView(page);
   if(page==='forum')renderPosts();
-  if(page==='wireless')renderEpisodes();
+  if(page==='wireless'){
+    if(S.currentShowId&&typeof renderEpisodes==='function')renderEpisodes();
+    else if(typeof renderShowGrid==='function')renderShowGrid();
+  }
 }
 
 function showMap(){
@@ -321,7 +436,7 @@ function showMap(){
   $('mood-back').classList.remove('visible');
   $('bottom-nav').style.display='none';
   $('profile-icon').style.display='block';
-  $('float-note').style.display='flex';
+  $('float-chat').style.display='flex';
   if($('pin-overlay'))$('pin-overlay').style.display='block';
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   S.view='map';S.mood=null;playForView('map');
@@ -350,7 +465,7 @@ function enterMoodWorld(mood){
   $('mood-back').classList.add('visible');
   $('bottom-nav').style.display='none';
   $('profile-icon').style.display='none';
-  $('float-note').style.display='flex';
+  $('float-chat').style.display='flex';
   S.mood=mood;S.view='mood';playForView('mood');
   if(mood==='expressionist'){
     bindExpTap();
@@ -462,12 +577,15 @@ function toggleMusic(key){
       if(el)el.classList.add('playing');
       
       // v01.06: Background playback — resumes in place if already picked once,
-      // otherwise opens the wireless page so the user can pick an episode.
+      // otherwise opens the wireless page directly into the default show
+      // (Midnight Archive) so the button always takes you to the podcast
+      // itself, never the shows browser.
       const result=startPodcastFromMusicBar();
       if(result===false){
-        showPage('wireless');
+        if(typeof openDefaultShowFromMusicBar==='function')openDefaultShowFromMusicBar();
+        else showPage('wireless');
       }else if(result===null){
-        updateNP('🎙 add an episode first');
+        updateNP('🎙 add a video first');
         toast('no episodes yet — add one below');
       }
     }
@@ -504,7 +622,7 @@ function closeMusicModal(){$('music-modal').classList.remove('open');}
 // in the profile panel — see below. This just toggles admin-only UI site-wide.)
 function updateAdminUI(){
   // Show/hide admin controls on episodes, posts, notes, etc.
-  document.querySelectorAll('.wp-ep-admin, .admin-controls, .rec-admin, .post-admin, .note-admin, .scream-admin, .lib-admin, .wcal-admin-toggle').forEach(el=>{
+  document.querySelectorAll('.wp-ep-admin, .admin-controls, .rec-admin, .post-admin, .note-admin, .scream-admin, .lib-admin, .wcal-admin-toggle, .show-admin').forEach(el=>{
     if(S.adminUnlocked)el.classList.add('show');
     else el.classList.remove('show');
   });
@@ -1099,8 +1217,9 @@ document.addEventListener('click',e=>{
 });
 
 // ═══ STONE NOTE ═══
-function openStoneNote(){$('stone-textarea').value=localStorage.getItem('n_stone')||'';$('stone-note').classList.add('open');}
-function closeStoneNote(){localStorage.setItem('n_stone',$('stone-textarea').value);$('stone-note').classList.remove('open');toast('carved into stone');}
+// v01.08: the old standalone "carved in stone" overlay (openStoneNote/
+// closeStoneNote) has been folded into the chat panel as a tab — see
+// chat.js (openChatPanel, switchChatTab, saveStoneDebounced).
 
 // ═══ EASTER EGGS ═══
 const KONAMI=[38,38,40,40,37,39,37,39,66,65];let ki=0;
@@ -1188,6 +1307,8 @@ async function loadProfileData() {
   if (S.adminUnlocked) {
     $('profile-bio-edit-btn').style.display = 'block';
     loadChangelogIfAdmin();
+    renderFeatureToggleList();
+    if(typeof renderChatAdminSettings==='function')renderChatAdminSettings();
   }
 }
 
@@ -1253,9 +1374,13 @@ async function handleAdminLoginProfile() {
     $('admin-unlocked-view-profile').style.display = 'block';
     $('profile-bio-edit-btn').style.display = 'block';
     loadChangelogIfAdmin();
+    renderFeatureToggleList();
+    if(typeof renderChatAdminSettings==='function')renderChatAdminSettings();
     toast('admin mode unlocked');
     updateAdminUI();
     renderEpisodes(); // refresh so wp-ep-admin edit/delete buttons show immediately
+    if(typeof renderShowGrid==='function')renderShowGrid();
+    if(typeof renderComments==='function')renderComments();
     if(typeof loadClaimNamesForAdmin==='function')loadClaimNamesForAdmin(); // reveal booking names now that admin is unlocked
   } else {
     errorDiv.textContent = 'wrong username or password';
@@ -1278,6 +1403,11 @@ function handleAdminLogoutProfile() {
   if(typeof renderCalendarGrid==='function')renderCalendarGrid();
   if(typeof closeAdminEdit==='function')closeAdminEdit();
   if($('wcal-admin-panel'))$('wcal-admin-panel').classList.remove('show');
+  if(typeof renderShowGrid==='function')renderShowGrid();
+  if(typeof renderComments==='function')renderComments();
+  if(typeof cancelShowDescriptionEdit==='function')cancelShowDescriptionEdit();
+  if(typeof closeShowForm==='function')closeShowForm();
+  if(S.selectMode&&typeof toggleSelectMode==='function')toggleSelectMode();
 }
 
 function initProfileIconDraggable() {

@@ -71,19 +71,34 @@
 <div id="pin-overlay" style="position:absolute;inset:0;pointer-events:none;z-index:20;">
   <div id="fpin-garden" class="map-pin" onclick="goToLocation('garden')" style="pointer-events:all">
     <div class="pin-dot"></div><div class="pin-label">the garden</div>
+    <div class="pin-construction">🚧</div>
   </div>
   <div id="fpin-square" class="map-pin" onclick="goToLocation('square')" style="pointer-events:all">
     <div class="pin-dot"></div><div class="pin-label">town square</div>
+    <div class="pin-construction">🚧</div>
   </div>
   <div id="fpin-forum" class="map-pin" onclick="goToLocation('forum')" style="pointer-events:all">
     <div class="pin-dot"></div><div class="pin-label">the tower (n/)</div>
+    <div class="pin-construction">🚧</div>
   </div>
   <div id="fpin-castle" class="map-pin" onclick="goToLocation('castle')" style="pointer-events:all">
     <div class="pin-dot" style="background:rgba(200,137,42,.6)"></div>
     <div class="pin-label secret">nosirt's keep</div>
+    <div class="pin-construction">🚧</div>
   </div>
   <div id="fpin-wireless" class="map-pin" onclick="goToLocation('wireless')" style="pointer-events:all">
     <div class="pin-dot" style="background:rgba(255,210,110,.65)"></div><div class="pin-label">the wireless</div>
+    <div class="pin-construction">🚧</div>
+  </div>
+</div>
+
+<!-- v01.07: shown when tapping a pin/nav item the admin has switched off -->
+<div id="review-modal">
+  <div class="review-panel">
+    <div class="review-icon">🚧</div>
+    <div class="review-title">under temporary review</div>
+    <div class="review-text" id="review-text">this part of the map is being tended to. check back soon.</div>
+    <button class="review-close" onclick="closeReviewNote()">turn back</button>
   </div>
 </div>
 
@@ -247,105 +262,212 @@
     <div class="page-title">the wireless</div>
     <div class="page-sub">tune in</div>
 
-    <div class="wp-header-controls">
-      <button class="wp-mode-label" id="wp-mode-toggle" onclick="toggleWaveVideo()" title="Toggle between waveform and video view">
-        <svg class="wp-icon wp-mode-icon-wave" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="10" width="3" height="4" rx="1.5"/><rect x="8" y="5" width="3" height="14" rx="1.5"/><rect x="14" y="2" width="3" height="20" rx="1.5"/><rect x="20" y="8" width="2.5" height="8" rx="1.25"/></svg>
-        <svg class="wp-icon wp-mode-icon-video" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="display:none"><path d="M4 6a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v2.3l4.3-2.5a1 1 0 0 1 1.5.87v10.66a1 1 0 0 1-1.5.87L15 15.7V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6z"/></svg>
-        <span class="wp-mode-text">podcast</span>
-      </button>
-      <div class="wcal-trigger" onclick="openCalendarModal()" title="book a recording slot">
+    <!-- ══ HOME: netflix-style grid of shows ══ -->
+    <div id="wp-home">
+      <div class="wp-toolbar">
+        <input class="sq-input" id="wp-home-search" placeholder="search shows..." oninput="renderShowGrid()" style="flex:1">
+        <button class="wp-add-toggle show-admin" onclick="openShowForm(null)">+ new show</button>
+      </div>
+      <div class="wcal-trigger" onclick="openCalendarModal()" style="margin-bottom:16px" title="book a recording slot">
         <span class="wcal-trigger-dot"></span> book a slot
       </div>
+      <div id="wp-show-grid" class="wp-show-grid"></div>
+      <div id="wp-show-grid-empty" class="wp-ep-empty" style="display:none">no shows yet.</div>
     </div>
 
-    <div id="wp-stage" class="wp-stage mode-wave is-paused">
-      <div id="wp-placeholder" class="wp-placeholder">pick an episode below to begin →</div>
-      <div id="wp-yt-wrap" class="wp-yt-wrap"><div id="yt-player"></div></div>
+    <!-- ══ SHOW DETAIL + PLAYER ══ -->
+    <div id="wp-show-view" style="display:none">
+      <button class="wp-back-btn" onclick="showWirelessHome()">‹ home</button>
 
-      <!-- v01.07: album-art style tile — the "audio only" visual, wave mode only -->
-      <div id="wp-art-tile" class="wp-art-tile">
-        <canvas id="wp-wave" class="wp-wave"></canvas>
+      <div id="wp-show-banner" class="wp-show-banner"></div>
+
+      <div class="wp-show-desc-wrap">
+        <div class="wp-show-desc" id="wp-show-desc-text"></div>
+        <textarea class="sq-textarea" id="wp-show-desc-edit" style="display:none;min-height:60px"></textarea>
+        <div class="wp-show-desc-actions" id="wp-show-desc-actions" style="display:none">
+          <button class="sq-submit" style="width:auto;padding:6px 14px" onclick="saveShowDescription()">save</button>
+          <button class="wcal-mini-btn" style="flex:0 0 auto;padding:6px 12px" onclick="cancelShowDescriptionEdit()">cancel</button>
+        </div>
+        <button class="wp-mini-edit show-admin" id="wp-show-desc-edit-btn" onclick="startShowDescriptionEdit()">✎ edit description</button>
       </div>
 
-      <!-- fullscreen/theater — video mode only -->
-      <div id="wp-video-controls" class="wp-video-controls" style="display:none">
-        <button class="wp-mini-btn" onclick="toggleTheater()" title="theater mode">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="10" rx="2"/></svg>
-        </button>
-        <button class="wp-mini-btn" onclick="toggleFullscreen()" title="fullscreen">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+      <div class="wp-show-admin-row">
+        <button class="wcal-mini-btn show-admin" onclick="openShowForm(currentShowIdSafe())">✎ edit show</button>
+        <button class="wcal-mini-btn danger show-admin" onclick="confirmDeleteShow()">🗑 delete show</button>
+      </div>
+
+      <div class="wp-header-controls">
+        <button class="wp-mode-label" id="wp-mode-toggle" onclick="toggleWaveVideo()" title="Toggle between waveform and video view">
+          <svg class="wp-icon wp-mode-icon-wave" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="10" width="3" height="4" rx="1.5"/><rect x="8" y="5" width="3" height="14" rx="1.5"/><rect x="14" y="2" width="3" height="20" rx="1.5"/><rect x="20" y="8" width="2.5" height="8" rx="1.25"/></svg>
+          <svg class="wp-icon wp-mode-icon-video" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="display:none"><path d="M4 6a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v2.3l4.3-2.5a1 1 0 0 1 1.5.87v10.66a1 1 0 0 1-1.5.87L15 15.7V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6z"/></svg>
+          <span class="wp-mode-text">podcast</span>
         </button>
       </div>
 
-      <!-- center play button — shown when nothing is playing -->
-      <button id="wp-center-play" class="wp-center-play" aria-label="play" style="display:flex">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.87l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z"/></svg>
-      </button>
+      <div id="wp-stage" class="wp-stage mode-wave is-paused">
+        <div id="wp-placeholder" class="wp-placeholder">pick a video below to begin →</div>
+        <div id="wp-yt-wrap" class="wp-yt-wrap"><div id="yt-player"></div></div>
 
-      <div id="wp-controls" class="wp-controls">
-        <div class="wp-now-title" id="wp-now-title"></div>
+        <!-- v01.07: album-art style tile — the "audio only" visual, wave mode only -->
+        <div id="wp-art-tile" class="wp-art-tile">
+          <canvas id="wp-wave" class="wp-wave"></canvas>
+        </div>
 
-        <div class="wp-btn-row">
-          <button class="wp-btn" id="wp-back" aria-label="back 10 seconds">
-            <svg class="wp-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 1 2.6 5.9"/><path d="M4 7.5V12h4.5"/></svg>
-            <span class="wp-btn-sub">10</span>
+        <!-- fullscreen/theater — video mode only -->
+        <div id="wp-video-controls" class="wp-video-controls" style="display:none">
+          <button class="wp-mini-btn" onclick="toggleTheater()" title="theater mode">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="10" rx="2"/></svg>
           </button>
-          <button class="wp-btn" id="wp-prev" onclick="prevEpisode()" aria-label="previous episode">
-            <svg class="wp-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M7 6a1 1 0 0 1 2 0v12a1 1 0 0 1-2 0V6zm3.5 5.13 8.4-5.93A1 1 0 0 1 20.5 6v12a1 1 0 0 1-1.6.8l-8.4-5.93a1 1 0 0 1 0-1.74z"/></svg>
-          </button>
-          <button class="wp-btn wp-btn-main" id="wp-playpause" aria-label="play or pause">
-            <svg class="wp-icon wp-icon-play" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.87l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z"/></svg>
-            <svg class="wp-icon wp-icon-pause" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="display:none"><rect x="6" y="5" width="4.5" height="14" rx="1.5"/><rect x="13.5" y="5" width="4.5" height="14" rx="1.5"/></svg>
-          </button>
-          <button class="wp-btn" id="wp-next" onclick="nextEpisode()" aria-label="next episode">
-            <svg class="wp-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M17 6a1 1 0 0 0-2 0v12a1 1 0 0 0 2 0V6zm-3.5 5.13L5.1 5.2A1 1 0 0 0 3.5 6v12a1 1 0 0 0 1.6.8l8.4-5.93a1 1 0 0 0 0-1.74z"/></svg>
-          </button>
-          <button class="wp-btn" id="wp-fwd" aria-label="forward 10 seconds">
-            <svg class="wp-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 0-2.6 5.9"/><path d="M20 7.5V12h-4.5"/></svg>
-            <span class="wp-btn-sub">10</span>
+          <button class="wp-mini-btn" onclick="toggleFullscreen()" title="fullscreen">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
           </button>
         </div>
 
-        <div class="wp-seek-row">
-          <span class="wp-time" id="wp-time-cur">0:00</span>
-          <div class="wp-seekbar" id="wp-seekbar">
-            <div class="wp-seek-fill" id="wp-seek-fill"></div>
-            <div class="wp-seek-handle" id="wp-seek-handle"></div>
+        <!-- center play button — shown when nothing is playing -->
+        <button id="wp-center-play" class="wp-center-play" aria-label="play" style="display:flex">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.87l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z"/></svg>
+        </button>
+
+        <div id="wp-controls" class="wp-controls">
+          <div class="wp-now-title" id="wp-now-title"></div>
+
+          <div class="wp-btn-row">
+            <button class="wp-btn" id="wp-back" aria-label="back 10 seconds">
+              <svg class="wp-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 1 2.6 5.9"/><path d="M4 7.5V12h4.5"/></svg>
+              <span class="wp-btn-sub">10</span>
+            </button>
+            <button class="wp-btn" id="wp-prev" onclick="prevEpisode()" aria-label="previous video">
+              <svg class="wp-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M7 6a1 1 0 0 1 2 0v12a1 1 0 0 1-2 0V6zm3.5 5.13 8.4-5.93A1 1 0 0 1 20.5 6v12a1 1 0 0 1-1.6.8l-8.4-5.93a1 1 0 0 1 0-1.74z"/></svg>
+            </button>
+            <button class="wp-btn wp-btn-main" id="wp-playpause" aria-label="play or pause">
+              <svg class="wp-icon wp-icon-play" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.87l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z"/></svg>
+              <svg class="wp-icon wp-icon-pause" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="display:none"><rect x="6" y="5" width="4.5" height="14" rx="1.5"/><rect x="13.5" y="5" width="4.5" height="14" rx="1.5"/></svg>
+            </button>
+            <button class="wp-btn" id="wp-next" onclick="nextEpisode()" aria-label="next video">
+              <svg class="wp-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M17 6a1 1 0 0 0-2 0v12a1 1 0 0 0 2 0V6zm-3.5 5.13L5.1 5.2A1 1 0 0 0 3.5 6v12a1 1 0 0 0 1.6.8l8.4-5.93a1 1 0 0 0 0-1.74z"/></svg>
+            </button>
+            <button class="wp-btn" id="wp-fwd" aria-label="forward 10 seconds">
+              <svg class="wp-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 0-2.6 5.9"/><path d="M20 7.5V12h-4.5"/></svg>
+              <span class="wp-btn-sub">10</span>
+            </button>
           </div>
-          <span class="wp-time" id="wp-time-dur">0:00</span>
+
+          <div class="wp-seek-row">
+            <span class="wp-time" id="wp-time-cur">0:00</span>
+            <div class="wp-seekbar" id="wp-seekbar">
+              <div class="wp-seek-fill" id="wp-seek-fill"></div>
+              <div class="wp-seek-handle" id="wp-seek-handle"></div>
+            </div>
+            <span class="wp-time" id="wp-time-dur">0:00</span>
+          </div>
+
+          <!-- volume + mute — available in both wave and video modes -->
+          <div class="wp-volume-row" id="wp-volume-row">
+            <button class="wp-mute-btn" id="wp-mute-btn" aria-label="mute">
+              <svg class="wp-icon wp-icon-vol-on" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+              <svg class="wp-icon wp-icon-vol-off" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="display:none"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M15.5 9.5l5 5m0-5l-5 5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
+            </button>
+            <input type="range" id="wp-volume" class="wp-volume-slider" min="0" max="100" value="100" aria-label="volume">
+          </div>
         </div>
+      </div>
 
-        <!-- volume + mute — available in both wave and video modes -->
-        <div class="wp-volume-row" id="wp-volume-row">
-          <button class="wp-mute-btn" id="wp-mute-btn" aria-label="mute">
-            <svg class="wp-icon wp-icon-vol-on" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
-            <svg class="wp-icon wp-icon-vol-off" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="display:none"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M15.5 9.5l5 5m0-5l-5 5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
-          </button>
-          <input type="range" id="wp-volume" class="wp-volume-slider" min="0" max="100" value="100" aria-label="volume">
+      <div class="wp-toolbar">
+        <input class="sq-input" id="wp-search" placeholder="search videos..." oninput="renderEpisodes()" style="flex:1">
+        <button class="wp-add-toggle" onclick="toggleAddEpisode()">+ add</button>
+      </div>
+
+      <div id="wp-add-panel" class="wp-add-panel" style="display:none">
+        <div id="wp-gate">
+          <input class="sq-input" id="wp-gate-pw" type="password" placeholder="password...">
+          <button class="sq-submit" style="width:auto;padding:7px 16px" onclick="tryRadioUnlock()">unlock →</button>
+          <div class="wp-gate-wrong" id="wp-gate-wrong"></div>
+        </div>
+        <div id="wp-add-form" style="display:none">
+          <div class="wp-add-tabs">
+            <button class="wp-add-tab active" id="wp-add-tab-single" onclick="setAddTab('single')">single video</button>
+            <button class="wp-add-tab" id="wp-add-tab-playlist" onclick="setAddTab('playlist')">import playlist</button>
+          </div>
+          <div id="wp-add-single">
+            <input class="sq-input" id="wp-ep-title" placeholder="video title...">
+            <input class="sq-input" id="wp-ep-url" placeholder="youtube link...">
+            <textarea class="sq-textarea" id="wp-ep-desc" placeholder="short description (optional)" style="min-height:48px"></textarea>
+            <button class="sq-submit" onclick="addEpisode()">add video →</button>
+          </div>
+          <div id="wp-add-playlist" style="display:none">
+            <input class="sq-input" id="wp-playlist-url" placeholder="youtube playlist link...">
+            <div class="wcal-admin-note">pulls every video's title + thumbnail straight from the playlist. large playlists may take a few seconds.</div>
+            <button class="sq-submit" onclick="importPlaylist()">import playlist →</button>
+            <div id="wp-import-progress" class="wcal-admin-note" style="display:none"></div>
+          </div>
         </div>
       </div>
-    </div>
 
-    <div class="wp-toolbar">
-      <input class="sq-input" id="wp-search" placeholder="search episodes..." oninput="renderEpisodes()" style="flex:1">
-      <button class="wp-add-toggle" onclick="toggleAddEpisode()">+ add</button>
-    </div>
-
-    <div id="wp-add-panel" class="wp-add-panel" style="display:none">
-      <div id="wp-gate">
-        <input class="sq-input" id="wp-gate-pw" type="password" placeholder="password...">
-        <button class="sq-submit" style="width:auto;padding:7px 16px" onclick="tryRadioUnlock()">unlock →</button>
-        <div class="wp-gate-wrong" id="wp-gate-wrong"></div>
+      <div class="wp-select-row">
+        <button class="wcal-mini-btn show-admin" id="wp-select-toggle" style="flex:0 0 auto;padding:6px 12px" onclick="toggleSelectMode()">select</button>
+        <span id="wp-select-count" style="display:none"></span>
+        <button class="wcal-mini-btn danger show-admin" id="wp-bulk-delete-btn" style="display:none;flex:0 0 auto;padding:6px 12px" onclick="bulkDeleteEpisodes()">delete selected</button>
       </div>
-      <div id="wp-add-form" style="display:none">
-        <input class="sq-input" id="wp-ep-title" placeholder="episode title...">
-        <input class="sq-input" id="wp-ep-url" placeholder="youtube link...">
-        <textarea class="sq-textarea" id="wp-ep-desc" placeholder="short description (optional)" style="min-height:48px"></textarea>
-        <button class="sq-submit" onclick="addEpisode()">add episode →</button>
+
+      <div class="wp-episode-list" id="wp-episode-list"></div>
+
+      <!-- comments -->
+      <div class="wp-comments" id="wp-comments-section" style="display:none">
+        <div class="wp-comments-title">comments</div>
+        <div class="wp-comment-form">
+          <input class="sq-input" id="wp-comment-name" placeholder="your name...">
+          <textarea class="sq-textarea" id="wp-comment-text" placeholder="say something about this one..." style="min-height:44px"></textarea>
+          <button class="sq-submit" style="width:auto;padding:8px 16px" onclick="submitComment()">post →</button>
+        </div>
+        <div id="wp-comment-list"></div>
       </div>
     </div>
+  </div>
+</div>
 
-    <div class="wp-episode-list" id="wp-episode-list"></div>
+<!-- show create/edit modal -->
+<div id="wp-show-form-modal">
+  <div class="wcal-panel">
+    <div class="wcal-head">
+      <div class="wcal-title" id="wp-show-form-title">new show</div>
+      <button class="wcal-close-x" onclick="closeShowForm()">✕</button>
+    </div>
+    <div class="wcal-admin-row" style="flex-direction:column;align-items:stretch;gap:6px;margin-bottom:12px">
+      <label style="flex:none">title</label>
+      <input class="sq-input" id="wp-show-title-input" placeholder="show title...">
+    </div>
+    <div class="wcal-admin-row" style="flex-direction:column;align-items:stretch;gap:6px;margin-bottom:12px">
+      <label style="flex:none">description</label>
+      <textarea class="sq-textarea" id="wp-show-desc-input" placeholder="what's this show about?" style="min-height:70px"></textarea>
+    </div>
+    <div class="wcal-admin-row" style="flex-direction:column;align-items:stretch;gap:8px;margin-bottom:6px">
+      <label style="flex:none">cover</label>
+      <div class="wp-cover-toggle">
+        <button class="wcal-mini-btn" id="wp-cover-opt-youtube" onclick="setCoverType('youtube')">from video</button>
+        <button class="wcal-mini-btn" id="wp-cover-opt-custom" onclick="setCoverType('custom')">custom image</button>
+        <button class="wcal-mini-btn" id="wp-cover-opt-plain" onclick="setCoverType('plain')">plain color</button>
+      </div>
+      <input class="sq-input" id="wp-show-cover-url" placeholder="image url..." style="display:none">
+      <input type="color" id="wp-show-cover-color" value="#c8892a" style="display:none;width:100%;height:38px;border:none;border-radius:8px;background:none;">
+    </div>
+    <label class="wp-default-check">
+      <input type="checkbox" id="wp-show-default-check"> make this the main podcast button's default show
+    </label>
+    <div class="wcal-admin-actions">
+      <button class="sq-submit" style="width:auto;padding:8px 18px" onclick="saveShowForm()">save show →</button>
+    </div>
+  </div>
+</div>
+
+<!-- reusable confirm modal -->
+<div id="wp-confirm-modal">
+  <div class="wcal-panel" style="max-width:360px">
+    <div class="wcal-title" id="wp-confirm-title">are you sure?</div>
+    <div class="wcal-sub" id="wp-confirm-body" style="text-align:left"></div>
+    <div class="wcal-admin-actions">
+      <button class="wcal-mini-btn danger" style="flex:0 0 auto;padding:9px 16px" id="wp-confirm-yes">yes, delete</button>
+      <button class="wcal-mini-btn" style="flex:0 0 auto;padding:9px 16px" onclick="closeConfirmModal()">cancel</button>
+    </div>
   </div>
 </div>
 
@@ -417,18 +539,62 @@
       </div>
       <div id="admin-unlocked-view-profile" style="display:none;text-align:center">
         <div style="font-size:.75rem;color:var(--amber);margin-bottom:8px;font-family:'Cinzel Decorative',serif">🔓 admin unlocked</div>
+        <!-- v01.07: feature toggles -->
+        <div style="text-align:left;border-top:1px solid rgba(200,137,42,.15);margin-top:4px;padding-top:10px;margin-bottom:10px">
+          <div style="font-size:.7rem;color:var(--fog);opacity:.6;margin-bottom:8px;font-family:'Cinzel Decorative',serif">features</div>
+          <div id="feature-toggle-list" style="display:flex;flex-direction:column;gap:7px"></div>
+        </div>
+        <!-- v01.08: global chat media settings -->
+        <div id="chat-admin-settings" style="text-align:left;border-top:1px solid rgba(200,137,42,.15);margin-top:4px;padding-top:10px;margin-bottom:10px"></div>
         <button class="sq-submit" onclick="handleAdminLogoutProfile()" style="width:100%;font-size:.75rem">lock</button>
       </div>
     </div>
   </div>
 </div>
 
-<div id="float-note" onclick="openStoneNote()">📜</div>
+<div id="float-chat" onclick="openChatPanel()">
+  💬<span id="chat-unread-badge" class="chat-unread-badge" style="display:none">0</span>
+</div>
 
-<div id="stone-note">
-  <div class="stone-title">carved in stone</div>
-  <textarea id="stone-textarea" placeholder="write here. it stays with you."></textarea>
-  <button class="stone-close" onclick="closeStoneNote()">close the stone</button>
+<!-- v01.08: chat panel — Global Chat / Personal Chat / Carved in Stone -->
+<div id="chat-panel">
+  <div class="chat-panel-inner">
+    <div class="chat-tabs">
+      <button id="chat-tabbtn-global" class="chat-tab-btn active" onclick="switchChatTab('global')">global chat</button>
+      <button id="chat-tabbtn-personal" class="chat-tab-btn" onclick="switchChatTab('personal')">personal</button>
+      <button id="chat-tabbtn-stone" class="chat-tab-btn" onclick="switchChatTab('stone')">carved in stone</button>
+      <button class="chat-panel-close" onclick="closeChatPanel()">✕</button>
+    </div>
+
+    <div id="chat-tab-global" class="chat-tab-body" style="display:flex">
+      <div id="chat-global-messages" class="chat-messages"></div>
+      <div id="gif-search-panel" class="gif-search-panel">
+        <div class="gif-search-head">
+          <input id="gif-search-input" type="text" placeholder="search GIFs…" oninput="onGifSearchInput(this.value)">
+          <button class="chat-panel-close" onclick="closeGifSearch()">✕</button>
+        </div>
+        <div id="gif-search-results" class="gif-search-results"></div>
+      </div>
+      <div class="chat-input-bar">
+        <button id="chat-media-btn" class="chat-media-btn" style="display:none" onclick="handleChatMediaBtn()"></button>
+        <input id="chat-image-input" type="file" accept="image/*" style="display:none" onchange="handleChatImageFileSelected(this)">
+        <input id="chat-global-input" class="chat-text-input" type="text" placeholder="say something…" maxlength="500" onkeydown="handleChatInputKeydown(event)">
+        <button class="chat-send-btn" onclick="sendChatMessage()">➤</button>
+      </div>
+    </div>
+
+    <div id="chat-tab-personal" class="chat-tab-body" style="display:none">
+      <div class="chat-under-construction">
+        <div style="font-size:1.6rem;margin-bottom:8px">🚧</div>
+        personal chat is still being built.<br>check back soon.
+      </div>
+    </div>
+
+    <div id="chat-tab-stone" class="chat-tab-body" style="display:none;flex-direction:column;align-items:center;justify-content:center">
+      <div class="stone-title">carved in stone</div>
+      <textarea id="stone-textarea" placeholder="write here. it stays with you." oninput="saveStoneDebounced()"></textarea>
+    </div>
+  </div>
 </div>
 
 <div id="castle-door">
@@ -648,6 +814,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/hammer.js/2.0.8/hammer.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
 <script src="https://www.youtube.com/iframe_api"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -660,6 +827,7 @@
 <script src="tower.js"></script>
 <script src="keep.js"></script>
 <script src="wireless.js"></script>
+<script src="chat.js"></script>
 
 </body>
 </html>

@@ -8,6 +8,38 @@
 // ═══ VERSION HISTORY ═══
 const VERSION_HISTORY = [
   {
+    version: '01.08',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'NEW: the carved-in-stone icon is now a chat panel with 3 tabs — Global Chat, Personal Chat (under construction), and Carved in Stone (your old private notes, unchanged)',
+      'Global Chat is a real-time, site-wide chat — everyone shows up as "user(#####): message", auto-updates for everyone as messages come in',
+      'Messages older than 24 hours are hidden and cleaned up automatically the next time anyone opens the chat',
+      'Admin panel: new "global chat" section — turn GIF search (GIPHY) or image upload on/off (off by default). Only one mode active at a time',
+      'Admin can delete any individual chat message',
+      'Chat text is HTML-escaped before display — necessary since this is fully public/anonymous, unlike other write-open parts of the site'
+    ]
+  },
+  {
+    version: '01.07',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'NEW: admin panel now has a "features" toggle list — garden, square, tower, wireless, the keep, and the welcome banner can each be switched off',
+      'Turning a world off removes its bottom-nav icon and marks its map pin with a 🚧 sign; tapping the pin shows a "temporary review" note instead of entering',
+      'Turning off the welcome banner makes the map the site\'s landing view — the intro is skipped entirely on load',
+      'Toggle state is synced live via Firebase (features doc), so it applies for every visitor immediately, including on first page load'
+    ]
+  },
+  {
+    version: '01.06',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'SECURITY: passwords no longer readable from the browser at all — moved off Firestore (which had to allow public reads for the old check to work) to a Netlify Function backed by env vars',
+      'validatePassword() now calls /.netlify/functions/check-password, which returns only true/false, never the real password',
+      'Added netlify/functions/check-password.js — see README-PASSWORDS.md for the Netlify setup steps',
+      'Old Firestore "passwords" collection is no longer used by the app — safe to lock down or delete once the new function is live'
+    ]
+  },
+  {
     version: '01.05',
     date: new Date().toLocaleDateString(),
     changes: [
@@ -101,6 +133,9 @@ const firebaseConfig = {
 
 // db is set after Firebase loads — starts null, safe to call fbSave/fbListen before it's ready
 let db = null;
+// v01.08: Firebase Storage — only actually used if admin turns on "image
+// upload" mode for global chat. Safe to init even if never used.
+let storage = null;
 
 function fbInit() {
   try {
@@ -108,6 +143,7 @@ function fbInit() {
       firebase.initializeApp(firebaseConfig);
     }
     db = firebase.firestore();
+    if (typeof firebase.storage === 'function') storage = firebase.storage();
   } catch(e) {
     console.warn('Firebase init failed, using localStorage only:', e.message);
   }
@@ -149,6 +185,135 @@ function fbListenStories(cb) {
   } catch(e) {}
 }
 
+// ═══ WIRELESS SHOWS — one doc per show, one doc per episode/video, one
+// doc per comment (same one-doc-per-item reasoning as stories above —
+// scales fine and each collection just gets listened to as a whole and
+// filtered client-side, matching the rest of this app's pattern). ═══
+function fbSaveShow(id, data, merge) {
+  if (!db) return;
+  try { db.collection('nosirt_shows').doc(id).set(data, {merge: !!merge}); } catch(e) {}
+}
+function fbDeleteShow(id) {
+  if (!db) return;
+  try { db.collection('nosirt_shows').doc(id).delete(); } catch(e) {}
+}
+function fbListenShows(cb) {
+  if (!db) return;
+  try {
+    db.collection('nosirt_shows').onSnapshot(snap => {
+      const items=[];
+      snap.forEach(doc=>items.push(doc.data()));
+      cb(items);
+    });
+  } catch(e) {}
+}
+function fbSaveShowEpisode(id, data, merge) {
+  if (!db) return;
+  try { db.collection('nosirt_show_episodes').doc(id).set(data, {merge: !!merge}); } catch(e) {}
+}
+function fbDeleteShowEpisode(id) {
+  if (!db) return;
+  try { db.collection('nosirt_show_episodes').doc(id).delete(); } catch(e) {}
+}
+function fbListenShowEpisodes(cb) {
+  if (!db) return;
+  try {
+    db.collection('nosirt_show_episodes').onSnapshot(snap => {
+      const items=[];
+      snap.forEach(doc=>items.push(doc.data()));
+      cb(items);
+    });
+  } catch(e) {}
+}
+function fbSaveComment(id, data) {
+  if (!db) return;
+  try { db.collection('nosirt_comments').doc(id).set(data); } catch(e) {}
+}
+function fbDeleteComment(id) {
+  if (!db) return;
+  try { db.collection('nosirt_comments').doc(id).delete(); } catch(e) {}
+}
+function fbListenComments(cb) {
+  if (!db) return;
+  try {
+    db.collection('nosirt_comments').onSnapshot(snap => {
+      const items=[];
+      snap.forEach(doc=>items.push(doc.data()));
+      cb(items);
+    });
+  } catch(e) {}
+}
+
+// ═══ v01.08: GLOBAL CHAT — one doc per message (same pattern as posts/
+// comments/etc above). "Delete on next visit" cleanup for messages older
+// than 24h happens in chat.js (cleanupOldChatMessages), not here. ═══
+function fbSaveChatMsg(id, data) {
+  if (!db) return;
+  try { db.collection('nosirt_chat_global').doc(id).set(data); } catch(e) {}
+}
+function fbDeleteChatMsg(id) {
+  if (!db) return;
+  try { db.collection('nosirt_chat_global').doc(id).delete(); } catch(e) {}
+}
+function fbListenChatMsgs(cb) {
+  if (!db) return;
+  try {
+    db.collection('nosirt_chat_global').onSnapshot(snap => {
+      const items=[];
+      snap.forEach(doc=>items.push(doc.data()));
+      cb(items);
+    });
+  } catch(e) {}
+}
+function fbGetChatMsgsOnce() {
+  if (!db) return Promise.resolve([]);
+  return db.collection('nosirt_chat_global').get().then(snap=>{
+    const items=[]; snap.forEach(doc=>items.push(doc.data())); return items;
+  }).catch(()=>[]);
+}
+
+// Uploads an image for "image upload" chat mode. Enforces type/size
+// client-side (server-side Firestore/Storage rules should mirror this —
+// see storage.rules). Returns {url, path} or null on failure.
+const CHAT_IMAGE_MAX_BYTES = 5 * 1024 * 1024; // 5MB
+async function fbUploadChatImage(file) {
+  if (!storage || !file) return null;
+  if (!/^image\//.test(file.type)) { toast('only image files are allowed'); return null; }
+  if (file.size > CHAT_IMAGE_MAX_BYTES) { toast('image too big — 5MB max'); return null; }
+  try {
+    const path = `chat_images/${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+    const ref = storage.ref().child(path);
+    await ref.put(file);
+    const url = await ref.getDownloadURL();
+    return { url, path };
+  } catch(e) {
+    console.warn('chat image upload failed:', e.message);
+    toast('image upload failed');
+    return null;
+  }
+}
+function fbDeleteChatImage(path) {
+  if (!storage || !path) return;
+  try { storage.ref().child(path).delete().catch(()=>{}); } catch(e) {}
+}
+
+// Paste a free YouTube Data API v3 key here to enable "import playlist" on
+// the wireless page. Get one at https://console.cloud.google.com →
+// create/select a project → APIs & Services → Library → enable
+// "YouTube Data API v3" → Credentials → Create API Key. Free quota
+// (10,000 units/day) covers this site's usage many times over.
+const YOUTUBE_API_KEY = 'PASTE_YOUR_YOUTUBE_API_KEY_HERE';
+
+// v01.08: Paste a free GIPHY API key here to enable "GIF search" mode in
+// global chat. Get one at https://developers.giphy.com — create a free
+// developer account → Create an App → choose "API" → copy the key. New
+// keys start as rate-limited "beta" (100 requests/hour), which is
+// plenty for a small chat; upgrade later only if you outgrow it.
+// (Note: Tenor's API — the other common GIF option — stopped accepting
+// new signups in Jan 2026 and shut down entirely on June 30, 2026, so
+// GIPHY is the only viable option here now.)
+const GIPHY_API_KEY = 'PASTE_YOUR_GIPHY_API_KEY_HERE';
+
 
 // ═══ CONFIG ═══
 let activeMusic=null;
@@ -162,9 +327,11 @@ let synthMusic=null;
 
 const FORUMS=['movies','shows','anime','books','music','venting','shopping','random'];
 const BAD=['fuck','shit','cunt','nigger','faggot','retard'];
-// Passwords (admin/podcast/keep) are no longer hardcoded here — they're
-// validated server-side against Firebase via validatePassword() below,
-// so they can't be read out of this file.
+// Passwords (admin/podcast/keep) are no longer hardcoded here, and as of
+// v01.06 they're no longer readable from the browser at all — they live
+// only as Netlify environment variables and are checked by a serverless
+// function (netlify/functions/check-password.js) via validatePassword()
+// below. See README-PASSWORDS.md.
 
 // People can type any genre they like when uploading a story, but it always
 // also gets mapped to one of these fixed canonical genres too, so search and
@@ -192,6 +359,14 @@ function mapGenre(text){
 }
 
 function genId(){const id=(Math.floor(Math.random()*9e9)+1e9)+'';localStorage.setItem('n_uid',id);return id;}
+
+// v01.08: this browser's global-chat display number — "user(#####)".
+// Persisted separately from S.userId so it stays a clean 5 digits.
+function getChatNum(){
+  let n = localStorage.getItem('n_chat_num');
+  if(!n){ n = String(Math.floor(10000 + Math.random()*90000)); localStorage.setItem('n_chat_num', n); }
+  return n;
+}
 
 // Default seed content for nosirt's keep — shown until real entries are added/synced
 const DEFAULT_SEED_CHAPTERS=[
@@ -356,6 +531,15 @@ const S={
   }],
   userId:localStorage.getItem('n_uid')||genId(),
   adminUnlocked:false,
+  // v01.07: admin can temporarily "turn off" a world/section from the
+  // profile panel. true = active/visible, false = under review. Synced
+  // live via Firebase ('features' doc) so it applies for every visitor,
+  // and to this browser before the intro banner even renders.
+  featureToggles:{garden:true,square:true,forum:true,wireless:true,castle:true,intro:true},
+  // v01.08: global chat
+  chatSettings:{mediaMode:'off'}, // 'off' | 'gif' | 'upload'
+  chatMessages:[],
+  chatLastSeenTs:Number(localStorage.getItem('n_chat_seen')||0),
 };
 
 function filt(t){let s=t||'';BAD.forEach(w=>{s=s.replace(new RegExp(w,'gi'),'***')});return s;}
@@ -364,17 +548,24 @@ function timeAgo(ts){const d=(Date.now()-ts)/1e3;if(d<60)return'just now';if(d<3
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}
 function $(id){return document.getElementById(id);}
 
-// ═══ v01.05: FIREBASE PASSWORD VALIDATION ═══
-// Passwords stored server-side, validated against Firebase
+// ═══ v01.06: SERVER-SIDE PASSWORD VALIDATION (Netlify Function) ═══
+// Passwords are no longer stored anywhere the browser can read them.
+// This calls a Netlify Function which checks the input against env vars
+// on Netlify's servers and returns ONLY true/false — the real password
+// value is never sent to the client. See README-PASSWORDS.md for setup.
 async function validatePassword(passwordType, inputValue) {
   try {
-    const docRef = db.collection('passwords').doc(passwordType);
-    const doc = await docRef.get();
-    if (doc.exists) {
-      const storedPw = doc.data().value;
-      return inputValue.trim() === storedPw;
+    const res = await fetch('/.netlify/functions/check-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passwordType, inputValue }),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    if (data.error === 'not_configured') {
+      console.warn(`Password "${passwordType}" has no value set in Netlify env vars yet.`);
     }
-    return false;
+    return !!data.ok;
   } catch (e) {
     console.error('Password validation error:', e);
     return false;

@@ -1,0 +1,16 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // IMPORTANT: Firestore rules use OR semantics — if more than one
+    // match block applies to a path, access is granted if ANY of them
+    // allows it. An earlier version of this file had a separate
+    // "deny passwords" block *and* a separate "allow everything" block,
+    // which was actually still open on /passwords/** because the
+    // allow-everything block matched it too and OR'd it back open.
+    // Fixed by folding the exclusion into one rule instead of two.
+    match /{collection}/{doc} {
+      allow read, write: if collection != 'passwords';
+    }
+  }
+}

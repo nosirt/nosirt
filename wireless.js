@@ -94,15 +94,21 @@ function loadEpisode(ep){
   else{pendingVideoId=ep.videoId;createPlayer(ep.videoId);}
   localStorage.setItem('n_last_podcast_ep',ep.id);
   renderEpisodes();
+  // show + load this video's comment thread
+  S.currentCommentEpisodeId=ep.id;
+  const commentsSection=$('wp-comments-section');
+  if(commentsSection)commentsSection.style.display='block';
+  if(typeof renderComments==='function')renderComments();
 }
 function loadEpisodeById(id){
-  const ep=S.episodes.find(e=>e.id===id);
+  const ep=(S.episodes||[]).find(e=>e.id===id);
   if(ep)loadEpisode(ep);
 }
 // v01.09: decide which episode plays when the user starts the podcast
 // without picking a specific one — a live stream always wins regardless
 // of saved position; otherwise resume where they left off; otherwise
 // start from the OLDEST episode (a new listener starts at the beginning).
+// S.episodes is sorted ascending by `order`, so the oldest is first.
 function pickDefaultEpisode(){
   if(!S.episodes||!S.episodes.length)return null;
   const liveEp=S.episodes.find(e=>e.isLive);
@@ -110,7 +116,7 @@ function pickDefaultEpisode(){
   const lastId=localStorage.getItem('n_last_podcast_ep');
   const resumed=lastId&&S.episodes.find(e=>e.id===lastId);
   if(resumed)return resumed;
-  return S.episodes[S.episodes.length-1]; // oldest — episodes are unshifted, so oldest is last
+  return S.episodes[0]; // oldest
 }
 
 function loadDefaultEpisode(){
@@ -122,8 +128,13 @@ function loadDefaultEpisode(){
 // playing in the background automatically. Browsers often block audio
 // autoplay without a prior user gesture — if that happens, fall back to
 // a gentle one-time prompt instead of failing silently.
+// Always checks the DEFAULT show specifically, regardless of what page
+// or show the visitor is currently looking at.
 function autoStartLiveIfAny(){
-  const liveEp=(S.episodes||[]).find(e=>e.isLive);
+  const defaultShow=getDefaultShow();
+  if(!defaultShow)return;
+  if(!S.currentShowId){S.currentShowId=defaultShow.id;refreshCurrentShowEpisodes();}
+  const liveEp=(S.showEpisodesAll||[]).filter(e=>e.showId===defaultShow.id).find(e=>e.isLive);
   if(!liveEp)return;
   loadEpisode(liveEp);
   setTimeout(()=>{
@@ -137,14 +148,14 @@ function nextEpisode(){
   if(!currentEpisode)return;
   const list=S.episodes;
   const i=list.findIndex(e=>e.id===currentEpisode.id);
-  if(i>0){loadEpisode(list[i-1]);toast('next: '+list[i-1].title);}
+  if(i>=0&&i<list.length-1){loadEpisode(list[i+1]);toast('next: '+list[i+1].title);}
   else{if(ytPlayer)ytPlayer.pauseVideo();toast("you've reached the end of the wireless");}
 }
 function prevEpisode(){
   if(!currentEpisode)return;
   const list=S.episodes;
   const i=list.findIndex(e=>e.id===currentEpisode.id);
-  if(i<list.length-1){loadEpisode(list[i+1]);toast('previous: '+list[i+1].title);}
+  if(i>0){loadEpisode(list[i-1]);toast('previous: '+list[i-1].title);}
 }
 
 function togglePlayPause(){
@@ -337,24 +348,32 @@ function stopWave(){ waveRunning=false; drawWave(Date.now()/800); }
 
 function renderEpisodes(){
   const q=($('wp-search')?$('wp-search').value:'').trim().toLowerCase();
-  const list=(S.episodes||[]).filter(e=>!q||e.title.toLowerCase().includes(q)||(e.desc||'').toLowerCase().includes(q));
+  const full=(S.episodes||[]);
+  const list=full.filter(e=>!q||e.title.toLowerCase().includes(q)||(e.desc||'').toLowerCase().includes(q));
   const el=$('wp-episode-list');if(!el)return;
   if(!list.length){
-    el.innerHTML='<div class="wp-ep-empty">no episodes yet'+(q?' match that search.':'. check back soon.')+'</div>';
+    el.innerHTML='<div class="wp-ep-empty">no videos yet'+(q?' match that search.':' in this show. check back soon.')+'</div>';
     return;
   }
   el.innerHTML=list.map(ep=>{
     const progress=S.podcastProgress&&S.podcastProgress[ep.id];
     const pct=progress?Math.round(progress.pct):0;
+    const globalIdx=full.findIndex(e=>e.id===ep.id);
+    const checked=S.selectedEpisodeIds&&S.selectedEpisodeIds.has(ep.id);
+    const clickAction=S.selectMode?`toggleEpisodeSelected(event,'${ep.id}')`:`loadEpisodeById('${ep.id}')`;
     return `
-    <div class="wp-ep-item ${currentEpisode&&currentEpisode.id===ep.id?'playing':''}" onclick="loadEpisodeById('${ep.id}')">
-      <div class="wp-ep-play-icon">${currentEpisode&&currentEpisode.id===ep.id?'🔊':'▶'}</div>
+    <div class="wp-ep-item ${currentEpisode&&currentEpisode.id===ep.id?'playing':''}" onclick="${clickAction}">
+      ${S.selectMode
+        ?`<input type="checkbox" class="wp-ep-checkbox" onclick="toggleEpisodeSelected(event,'${ep.id}')" ${checked?'checked':''}>`
+        :`<div class="wp-ep-play-icon">${currentEpisode&&currentEpisode.id===ep.id?'🔊':'▶'}${ep.isLive?'<span class="wp-ep-live-dot" title="live now"></span>':''}</div>`}
       <div class="wp-ep-content">
         <div class="wp-ep-title">${esc(ep.title)}</div>
         ${ep.desc?`<div class="wp-ep-desc">${esc(ep.desc)}</div>`:''}
         ${pct>0?`<div class="wp-ep-progress"><div class="wp-ep-progress-fill" style="width:${pct}%"></div></div>`:''}
       </div>
-      <div class="wp-ep-admin ${S.adminUnlocked?'show':''}">
+      <div class="wp-ep-admin ${S.adminUnlocked&&!S.selectMode?'show':''}">
+        <button class="wp-ep-btn" onclick="moveEpisode(event,'${ep.id}',-1)" title="move up" ${globalIdx<=0?'disabled':''}>↑</button>
+        <button class="wp-ep-btn" onclick="moveEpisode(event,'${ep.id}',1)" title="move down" ${globalIdx>=full.length-1?'disabled':''}>↓</button>
         <button class="wp-ep-btn edit" onclick="editEpisode(event,'${ep.id}')" title="edit">✎</button>
         <button class="wp-ep-btn delete" onclick="deleteEpisode(event,'${ep.id}')" title="delete">✕</button>
       </div>
@@ -386,63 +405,137 @@ async function tryRadioUnlock(){
   }
 }
 
+function setAddTab(tab){
+  $('wp-add-tab-single').classList.toggle('active',tab==='single');
+  $('wp-add-tab-playlist').classList.toggle('active',tab==='playlist');
+  $('wp-add-single').style.display=tab==='single'?'flex':'none';
+  $('wp-add-playlist').style.display=tab==='playlist'?'flex':'none';
+}
+
 function parseYouTubeId(url){
   const m=(url||'').match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|v=)([a-zA-Z0-9_-]{11})/);
   return m?m[1]:null;
+}
+function parsePlaylistId(url){
+  const m=(url||'').match(/[?&]list=([a-zA-Z0-9_-]+)/);
+  return m?m[1]:null;
+}
+
+function nextEpisodeOrder(){
+  const eps=(S.showEpisodesAll||[]).filter(e=>e.showId===S.currentShowId);
+  return eps.length?Math.max(...eps.map(e=>e.order||0))+1:0;
 }
 
 function deleteEpisode(e,id){
   if(!S.adminUnlocked)return;
   e.stopPropagation();
-  if(confirm('delete this episode?')){
-    S.episodes=S.episodes.filter(ep=>ep.id!==id);
-    persistEpisodes();
+  const ep=(S.episodes||[]).find(x=>x.id===id);
+  if(!ep)return;
+  showConfirmModal('delete this video?','"'+ep.title+'" will be permanently removed from this show.',()=>{
+    fbDeleteShowEpisode(id);
+    (S.comments||[]).filter(c=>c.episodeId===id).forEach(c=>fbDeleteComment(c.id));
     if(currentEpisode&&currentEpisode.id===id){
       currentEpisode=null;
       $('wp-placeholder').style.display='flex';
       $('wp-now-title').textContent='';
     }
-    renderEpisodes();
-    updateLiveBadge();
-    toast('episode deleted');
-  }
+    toast('video deleted');
+  });
 }
 function editEpisode(e,id){
   if(!S.adminUnlocked)return;
   e.stopPropagation();
-  const ep=S.episodes.find(x=>x.id===id);
+  const ep=(S.episodes||[]).find(x=>x.id===id);
   if(!ep)return;
-  const newTitle=prompt('episode title:',ep.title);
+  const newTitle=prompt('video title:',ep.title);
   if(newTitle===null)return;
-  ep.title=filt(newTitle.trim());
   const newDesc=prompt('description:',ep.desc||'');
-  if(newDesc!==null)ep.desc=filt(newDesc.trim());
-  persistEpisodes();
-  if(currentEpisode&&currentEpisode.id===id)$('wp-now-title').textContent=ep.title;
-  renderEpisodes();
-  toast('episode updated');
+  const updates={title:filt(newTitle.trim())};
+  if(newDesc!==null)updates.desc=filt(newDesc.trim());
+  fbSaveShowEpisode(id,updates,true);
+  if(currentEpisode&&currentEpisode.id===id)$('wp-now-title').textContent=updates.title;
+  toast('video updated');
+}
+
+// Swaps `order` values with the adjacent item — works regardless of
+// whether the underlying order numbers are contiguous.
+function moveEpisode(e,id,dir){
+  if(!S.adminUnlocked)return;
+  e.stopPropagation();
+  const list=(S.episodes||[]).slice();
+  const idx=list.findIndex(x=>x.id===id);
+  const swapIdx=idx+dir;
+  if(idx===-1||swapIdx<0||swapIdx>=list.length)return;
+  const a=list[idx],b=list[swapIdx];
+  fbSaveShowEpisode(a.id,{order:b.order},true);
+  fbSaveShowEpisode(b.id,{order:a.order},true);
 }
 
 function addEpisode(){
+  if(!S.currentShowId){toast('open a show first');return;}
   const title=filt($('wp-ep-title').value.trim());
   const url=$('wp-ep-url').value.trim();
   const desc=filt($('wp-ep-desc').value.trim());
   const videoId=parseYouTubeId(url);
   if(!title){toast('give it a title first');return;}
   if(!videoId){toast("that doesn't look like a youtube link");return;}
-  const ep={id:'ep'+Date.now(),title,desc,videoId,addedAt:Date.now()};
-  S.episodes.unshift(ep);
-  persistEpisodes();
+  const id='ep'+Date.now();
+  const ep={id,showId:S.currentShowId,title,desc,videoId,order:nextEpisodeOrder(),addedAt:Date.now(),isLive:false};
+  fbSaveShowEpisode(id,ep);
   $('wp-ep-title').value='';$('wp-ep-url').value='';$('wp-ep-desc').value='';
-  toast('episode added ✓');
-  renderEpisodes();
+  toast('video added ✓');
   // v01.08: check if this is a live stream — if so, light up the map badge
   probeLiveStatus(ep,(isLive)=>{ if(isLive)markEpisodeLive(ep.id,true); });
 }
 
-function persistEpisodes(){
-  localStorage.setItem('n_episodes',JSON.stringify(S.episodes));
-  fbSave('episodes',{v:JSON.stringify(S.episodes)});
+// Pulls every video out of a public YouTube playlist via the Data API v3
+// and creates one episode doc per video, in playlist order.
+async function importPlaylist(){
+  if(!S.currentShowId){toast('open a show first');return;}
+  if(!YOUTUBE_API_KEY||YOUTUBE_API_KEY.indexOf('PASTE_YOUR')===0){
+    toast('add a free YouTube API key in core.js first (see the comment above YOUTUBE_API_KEY)');
+    return;
+  }
+  const url=$('wp-playlist-url').value.trim();
+  const playlistId=parsePlaylistId(url);
+  if(!playlistId){toast("that doesn't look like a playlist link");return;}
+  const progressEl=$('wp-import-progress');
+  progressEl.style.display='block';
+  progressEl.textContent='importing…';
+  let pageToken='',imported=0,order=nextEpisodeOrder();
+  try{
+    do{
+      const resp=await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=50&playlistId=${encodeURIComponent(playlistId)}&pageToken=${pageToken}&key=${YOUTUBE_API_KEY}`);
+      const data=await resp.json();
+      if(data.error)throw new Error(data.error.message||'YouTube API error');
+      const items=data.items||[];
+      const batch=db.batch();
+      items.forEach(item=>{
+        const vid=item.snippet&&item.snippet.resourceId&&item.snippet.resourceId.videoId;
+        if(!vid)return;
+        const rawTitle=(item.snippet.title||'untitled').trim();
+        if(rawTitle==='Private video'||rawTitle==='Deleted video')return;
+        const id='ep'+Date.now()+'_'+vid;
+        order++;
+        batch.set(db.collection('nosirt_show_episodes').doc(id),{
+          id,showId:S.currentShowId,title:filt(rawTitle),desc:'',videoId:vid,
+          order,addedAt:Date.now(),isLive:false
+        });
+        imported++;
+      });
+      await batch.commit();
+      pageToken=data.nextPageToken||'';
+      progressEl.textContent=`imported ${imported} so far…`;
+    }while(pageToken&&imported<300); // safety cap
+    progressEl.textContent=`done — imported ${imported} video${imported===1?'':'s'}.`;
+    $('wp-playlist-url').value='';
+    toast('playlist imported ✓');
+    setTimeout(()=>{progressEl.style.display='none';},4000);
+  }catch(err){
+    console.error('playlist import error:',err);
+    progressEl.textContent='import failed: '+err.message;
+    toast('playlist import failed');
+  }
 }
 
 // ═══ v01.08: LIVE STREAM DETECTION ═══
@@ -481,19 +574,19 @@ function probeLiveStatus(ep,cb){
 }
 
 function markEpisodeLive(id,isLive){
-  const ep=S.episodes.find(x=>x.id===id);
+  const ep=(S.showEpisodesAll||[]).find(x=>x.id===id);
   if(!ep)return;
   const changed=!!ep.isLive!==isLive;
-  ep.isLive=isLive;
-  ep.liveCheckedAt=Date.now();
-  if(changed){persistEpisodes();renderEpisodes();}
+  if(changed)fbSaveShowEpisode(id,{isLive,liveCheckedAt:Date.now()},true);
   updateLiveBadge();
 }
 
 function updateLiveBadge(){
   const badge=$('wireless-live-badge');
   if(!badge)return;
-  const liveEp=(S.episodes||[]).find(e=>e.isLive);
+  const defaultShow=getDefaultShow();
+  const eps=defaultShow?(S.showEpisodesAll||[]).filter(e=>e.showId===defaultShow.id):[];
+  const liveEp=eps.find(e=>e.isLive);
   const label=badge.querySelector('.live-badge-text');
   if(liveEp){
     badge.classList.add('is-live');
@@ -502,16 +595,20 @@ function updateLiveBadge(){
   }else{
     badge.classList.remove('is-live');
     if(label)label.textContent='podcast';
-    badge.title='the wireless — tap to browse episodes';
+    badge.title='the wireless — tap to browse';
   }
 }
 
 function handleLiveBadgeClick(){
+  const defaultShow=getDefaultShow();
+  if(!defaultShow){navigateTo('wireless');return;}
+  if(S.currentShowId!==defaultShow.id){S.currentShowId=defaultShow.id;refreshCurrentShowEpisodes();}
   const ep=pickDefaultEpisode();
-  if(!ep){navigateTo('wireless');return;} // no episodes exist yet at all
+  if(!ep){navigateTo('wireless');return;} // no videos exist yet at all
   loadEpisode(ep);
   toast(ep.isLive?('🔴 tuning in live: '+ep.title):('▶ '+ep.title));
   navigateTo('wireless');
+  if(typeof setActiveShow==='function')setActiveShow(defaultShow.id,{autoplay:false});
 }
 
 // Safety-net + periodic re-check for whichever episode is currently
@@ -520,7 +617,10 @@ function handleLiveBadgeClick(){
 // stuck showing LIVE forever even if a check silently fails.
 const LIVE_MAX_AGE_MS=6*60*60*1000; // 6 hours
 function sweepLiveStatus(){
-  const liveEp=(S.episodes||[]).find(e=>e.isLive);
+  const defaultShow=getDefaultShow();
+  if(!defaultShow)return;
+  const eps=(S.showEpisodesAll||[]).filter(e=>e.showId===defaultShow.id);
+  const liveEp=eps.find(e=>e.isLive);
   if(!liveEp)return;
   if(Date.now()-(liveEp.liveCheckedAt||0)>LIVE_MAX_AGE_MS){
     markEpisodeLive(liveEp.id,false);
@@ -529,13 +629,22 @@ function sweepLiveStatus(){
   probeLiveStatus(liveEp,(isLive)=>{ markEpisodeLive(liveEp.id,isLive); });
 }
 
+// The top music-bar podcast button ALWAYS means the default show
+// (Midnight Archive) specifically — never whatever show the visitor
+// happens to be browsing.
 function startPodcastFromMusicBar(){
+  const defaultShow=getDefaultShow();
+  if(!defaultShow)return null;
+  if(S.currentShowId!==defaultShow.id){
+    S.currentShowId=defaultShow.id;
+    refreshCurrentShowEpisodes();
+  }
   const liveEp=(S.episodes||[]).find(e=>e.isLive);
   if(liveEp&&(!currentEpisode||currentEpisode.id!==liveEp.id)){
     loadEpisode(liveEp);
     return true; // handled — no page navigation needed
   }
-  if(currentEpisode&&ytPlayer){
+  if(currentEpisode&&ytPlayer&&currentEpisode.showId===defaultShow.id){
     ytPlayer.playVideo();
     return true;
   }
@@ -544,6 +653,15 @@ function startPodcastFromMusicBar(){
     return false;
   }
   return null;
+}
+
+// Called by the top-bar podcast button when it needs to open the wireless
+// page fresh — always lands directly on the default show's player, never
+// the shows-browser home grid.
+function openDefaultShowFromMusicBar(){
+  const defaultShow=getDefaultShow();
+  showPage('wireless');
+  if(defaultShow)setActiveShow(defaultShow.id,{autoplay:false});
 }
 
 (function initWireless(){
@@ -917,4 +1035,389 @@ async function deleteSlot(){
     console.error('delete slot error:',e);
     toast('couldn\'t remove that slot');
   }
+}
+
+/* ============================================================
+   WIRELESS SHOWS — Netflix-style multi-show browser
+   Every show (podcast, music playlist, whatever else gets added)
+   lives in Firestore collection nosirt_shows; every video lives in
+   nosirt_show_episodes tagged with a showId. S.episodes always holds
+   whichever show is currently open (see refreshCurrentShowEpisodes),
+   which is why nearly all the player/episode logic above didn't need
+   to change — it already just reads S.episodes.
+   ============================================================ */
+
+function getDefaultShow(){
+  return (S.shows||[]).find(s=>s.isDefault) || (S.shows||[])[0] || null;
+}
+function currentShowIdSafe(){ return S.currentShowId||null; }
+
+function refreshCurrentShowEpisodes(){
+  S.episodes=(S.showEpisodesAll||[]).filter(e=>e.showId===S.currentShowId).sort((a,b)=>(a.order||0)-(b.order||0));
+}
+
+// One-time migration: if no shows exist yet but the old single-podcast
+// data does, wrap it into a "Midnight Archive" show so nothing is lost.
+async function ensureShowsMigrated(){
+  if(!db)return;
+  try{
+    const showsSnap=await db.collection('nosirt_shows').get();
+    if(!showsSnap.empty)return;
+    const legacySnap=await db.collection('nosirt').doc('episodes').get();
+    const legacyEpisodes=legacySnap.exists?JSON.parse(legacySnap.data().v||'[]'):[];
+    const showId='midnight-archive';
+    await db.collection('nosirt_shows').doc(showId).set({
+      id:showId,title:'Midnight Archive',
+      description:'the original wireless broadcast — strange stories, late-night thoughts, and things better left half-explained.',
+      coverType:'youtube',coverUrl:'',colorHex:'#c8892a',order:0,isDefault:true,createdAt:Date.now()
+    });
+    if(legacyEpisodes.length){
+      const batch=db.batch();
+      // legacy list was newest-first (unshift) — reverse so order ascends oldest→newest
+      const chronological=legacyEpisodes.slice().reverse();
+      chronological.forEach((ep,i)=>{
+        const id=ep.id||('ep'+Date.now()+i);
+        batch.set(db.collection('nosirt_show_episodes').doc(id),{
+          id,showId,title:ep.title||'untitled',videoId:ep.videoId,desc:ep.desc||'',
+          order:i,isLive:!!ep.isLive,liveCheckedAt:ep.liveCheckedAt||0,addedAt:ep.addedAt||Date.now()
+        });
+      });
+      await batch.commit();
+    }
+  }catch(e){console.warn('show migration error:',e.message);}
+}
+
+async function initWirelessShows(){
+  await ensureShowsMigrated();
+  fbListenShows(items=>{
+    S.shows=(items||[]).sort((a,b)=>(a.order||0)-(b.order||0));
+    if(S.currentShowId)refreshCurrentShowEpisodes();
+    if(S.wpView==='home'||!S.wpView)renderShowGrid();
+    updateLiveBadge();
+  });
+  fbListenShowEpisodes(items=>{
+    S.showEpisodesAll=items||[];
+    if(S.currentShowId)refreshCurrentShowEpisodes();
+    if(S.wpView==='show')renderEpisodes();
+    if(S.wpView==='home'||!S.wpView)renderShowGrid();
+    updateLiveBadge();
+    if(!S._autoLiveCheckDone){
+      S._autoLiveCheckDone=true;
+      if(typeof autoStartLiveIfAny==='function')autoStartLiveIfAny();
+    }
+  });
+  fbListenComments(items=>{
+    S.comments=items||[];
+    if(S.currentCommentEpisodeId&&typeof renderComments==='function')renderComments();
+  });
+}
+
+// ── navigation between the netflix grid and a show's detail/player ──
+function showWirelessHome(){
+  S.wpView='home';
+  S.currentShowId=null;
+  const showView=$('wp-show-view'),home=$('wp-home');
+  if(showView)showView.style.display='none';
+  if(home)home.style.display='block';
+  renderShowGrid();
+}
+
+function setActiveShow(showId,opts){
+  opts=opts||{};
+  S.currentShowId=showId;
+  S.selectMode=false;S.selectedEpisodeIds=new Set();
+  refreshCurrentShowEpisodes();
+  S.wpView='show';
+  const showView=$('wp-show-view'),home=$('wp-home');
+  if(home)home.style.display='none';
+  if(showView)showView.style.display='block';
+  renderShowBanner();
+  renderEpisodes();
+  updateBulkDeleteUI();
+  if(opts.autoplay)loadDefaultEpisode();
+}
+function openShow(showId){ setActiveShow(showId,{autoplay:false}); }
+
+// ── home grid ──
+function showCoverStyle(show,eps){
+  if(show.coverType==='custom'&&show.coverUrl){
+    return {style:`background-image:url('${show.coverUrl.replace(/'/g,'')}');background-size:cover;background-position:center;`};
+  }
+  if(show.coverType==='youtube'){
+    const first=eps&&eps[0];
+    if(first&&first.videoId){
+      return {style:`background-image:url('https://img.youtube.com/vi/${first.videoId}/hqdefault.jpg');background-size:cover;background-position:center;`};
+    }
+  }
+  const color=show.colorHex||'#c8892a';
+  return {style:`background:linear-gradient(135deg, ${color}55, ${color}22);`,label:`<span class="wp-show-cover-title">${esc(show.title)}</span>`};
+}
+
+function renderShowGrid(){
+  const grid=$('wp-show-grid'),empty=$('wp-show-grid-empty');
+  if(!grid)return;
+  const q=($('wp-home-search')?$('wp-home-search').value:'').trim().toLowerCase();
+  const shows=(S.shows||[]).filter(s=>!q||s.title.toLowerCase().includes(q)||(s.description||'').toLowerCase().includes(q));
+  if(!shows.length){
+    grid.innerHTML='';
+    empty.style.display='block';
+    empty.textContent=q?'no shows match that search.':'no shows yet.';
+    return;
+  }
+  empty.style.display='none';
+  grid.innerHTML=shows.map(s=>{
+    const eps=(S.showEpisodesAll||[]).filter(e=>e.showId===s.id).sort((a,b)=>(a.order||0)-(b.order||0));
+    const cover=showCoverStyle(s,eps);
+    const shortDesc=(s.description||'').slice(0,80);
+    return `<div class="wp-show-card" onclick="openShow('${s.id}')">
+      <div class="wp-show-cover" style="${cover.style}">${cover.label||''}</div>
+      <div class="wp-show-card-title">${esc(s.title)}</div>
+      <div class="wp-show-card-desc">${esc(shortDesc)}${(s.description||'').length>80?'…':''}</div>
+      <div class="wp-show-card-count">${eps.length} video${eps.length===1?'':'s'}</div>
+    </div>`;
+  }).join('');
+}
+
+// ── show banner + description editing ──
+function renderShowBanner(){
+  const show=(S.shows||[]).find(s=>s.id===S.currentShowId);
+  const bannerEl=$('wp-show-banner');
+  if(!show||!bannerEl)return;
+  const eps=(S.showEpisodesAll||[]).filter(e=>e.showId===show.id);
+  const cover=showCoverStyle(show,eps);
+  bannerEl.style.cssText=cover.style;
+  bannerEl.innerHTML=`<div class="wp-show-banner-overlay"><div class="wp-show-banner-title">${esc(show.title)}</div></div>`;
+  const descText=$('wp-show-desc-text');
+  if(descText)descText.textContent=show.description||'';
+}
+
+function startShowDescriptionEdit(){
+  if(!S.adminUnlocked)return;
+  const show=(S.shows||[]).find(s=>s.id===S.currentShowId);if(!show)return;
+  $('wp-show-desc-text').style.display='none';
+  $('wp-show-desc-edit-btn').style.display='none';
+  const ta=$('wp-show-desc-edit');ta.value=show.description||'';ta.style.display='block';
+  $('wp-show-desc-actions').style.display='flex';
+}
+function cancelShowDescriptionEdit(){
+  const text=$('wp-show-desc-text'),btn=$('wp-show-desc-edit-btn'),ta=$('wp-show-desc-edit'),actions=$('wp-show-desc-actions');
+  if(text)text.style.display='block';
+  if(btn)btn.style.display='inline-flex';
+  if(ta)ta.style.display='none';
+  if(actions)actions.style.display='none';
+}
+function saveShowDescription(){
+  const show=(S.shows||[]).find(s=>s.id===S.currentShowId);if(!show)return;
+  const val=filt($('wp-show-desc-edit').value.trim());
+  fbSaveShow(show.id,{description:val},true);
+  show.description=val; // optimistic
+  renderShowBanner();
+  cancelShowDescriptionEdit();
+  toast('description updated');
+}
+
+// ── create/edit show modal ──
+let wcalCoverType='youtube';
+let wpEditingShowId=null;
+
+function openShowForm(showId){
+  if(!S.adminUnlocked){toast('admin access required');return;}
+  wpEditingShowId=showId;
+  const show=showId?(S.shows||[]).find(s=>s.id===showId):null;
+  $('wp-show-form-title').textContent=show?'edit show':'new show';
+  $('wp-show-title-input').value=show?show.title:'';
+  $('wp-show-desc-input').value=show?(show.description||''):'';
+  setCoverType(show?(show.coverType||'youtube'):'youtube');
+  $('wp-show-cover-url').value=(show&&show.coverType==='custom')?(show.coverUrl||''):'';
+  $('wp-show-cover-color').value=(show&&show.colorHex)?show.colorHex:'#c8892a';
+  $('wp-show-default-check').checked=!!(show&&show.isDefault);
+  $('wp-show-form-modal').classList.add('open');
+}
+function closeShowForm(){
+  const modal=$('wp-show-form-modal');
+  if(modal)modal.classList.remove('open');
+  wpEditingShowId=null;
+}
+function setCoverType(type){
+  wcalCoverType=type;
+  ['youtube','custom','plain'].forEach(t=>{
+    const btn=$('wp-cover-opt-'+t);
+    if(btn)btn.classList.toggle('active-cover',t===type);
+  });
+  $('wp-show-cover-url').style.display=type==='custom'?'block':'none';
+  $('wp-show-cover-color').style.display=type==='plain'?'block':'none';
+}
+function saveShowForm(){
+  const title=filt($('wp-show-title-input').value.trim());
+  if(!title){toast('give the show a title');return;}
+  const description=filt($('wp-show-desc-input').value.trim());
+  const coverUrl=$('wp-show-cover-url').value.trim();
+  const colorHex=$('wp-show-cover-color').value;
+  const makeDefault=$('wp-show-default-check').checked;
+  const isNew=!wpEditingShowId;
+  const id=wpEditingShowId||('show'+Date.now());
+  const existing=(S.shows||[]).find(s=>s.id===id);
+  const order=isNew?((S.shows||[]).length):(existing?existing.order:0);
+  const data={id,title,description,coverType:wcalCoverType,coverUrl,colorHex,order,
+    isDefault:makeDefault,createdAt:isNew?Date.now():(existing?existing.createdAt:Date.now())};
+  try{
+    if(makeDefault){
+      const prevDefault=(S.shows||[]).find(s=>s.isDefault&&s.id!==id);
+      if(prevDefault)fbSaveShow(prevDefault.id,{isDefault:false},true);
+    }
+    fbSaveShow(id,data);
+    toast(isNew?'show created':'show updated');
+    closeShowForm();
+    if(isNew)setTimeout(()=>openShow(id),300);
+  }catch(e){
+    console.error('save show error:',e);
+    toast("couldn't save the show");
+  }
+}
+
+// ── delete show ──
+function confirmDeleteShow(){
+  if(!S.adminUnlocked)return;
+  const show=(S.shows||[]).find(s=>s.id===S.currentShowId);
+  if(!show)return;
+  const eps=(S.showEpisodesAll||[]).filter(e=>e.showId===show.id);
+  showConfirmModal(
+    `delete "${show.title}"?`,
+    `this permanently removes the show and all ${eps.length} video${eps.length===1?'':'s'} in it. this can't be undone.`,
+    ()=>deleteShowConfirmed(show.id)
+  );
+}
+async function deleteShowConfirmed(showId){
+  if(!db)return;
+  try{
+    const eps=(S.showEpisodesAll||[]).filter(e=>e.showId===showId);
+    const batch=db.batch();
+    eps.forEach(e=>batch.delete(db.collection('nosirt_show_episodes').doc(e.id)));
+    batch.delete(db.collection('nosirt_shows').doc(showId));
+    await batch.commit();
+    const epIds=new Set(eps.map(e=>e.id));
+    const orphanComments=(S.comments||[]).filter(c=>epIds.has(c.episodeId));
+    if(orphanComments.length){
+      const cbatch=db.batch();
+      orphanComments.forEach(c=>cbatch.delete(db.collection('nosirt_comments').doc(c.id)));
+      await cbatch.commit();
+    }
+    toast('show deleted');
+    showWirelessHome();
+  }catch(e){
+    console.error('delete show error:',e);
+    toast("couldn't delete the show");
+  }
+}
+
+// ── reusable "are you sure?" confirm modal ──
+function showConfirmModal(title,body,onConfirm){
+  $('wp-confirm-title').textContent=title;
+  $('wp-confirm-body').textContent=body;
+  const yesBtn=$('wp-confirm-yes');
+  yesBtn.onclick=()=>{closeConfirmModal();onConfirm();};
+  $('wp-confirm-modal').classList.add('open');
+}
+function closeConfirmModal(){
+  const modal=$('wp-confirm-modal');
+  if(modal)modal.classList.remove('open');
+}
+
+// ── multi-select + bulk delete ──
+function toggleSelectMode(){
+  if(!S.adminUnlocked)return;
+  S.selectMode=!S.selectMode;
+  S.selectedEpisodeIds=new Set();
+  const toggleBtn=$('wp-select-toggle');
+  if(toggleBtn){
+    toggleBtn.textContent=S.selectMode?'cancel select':'select';
+    toggleBtn.classList.toggle('active-cover',S.selectMode);
+  }
+  updateBulkDeleteUI();
+  renderEpisodes();
+}
+function toggleEpisodeSelected(e,id){
+  e.stopPropagation();
+  if(!S.selectedEpisodeIds)S.selectedEpisodeIds=new Set();
+  if(S.selectedEpisodeIds.has(id))S.selectedEpisodeIds.delete(id);
+  else S.selectedEpisodeIds.add(id);
+  updateBulkDeleteUI();
+  renderEpisodes();
+}
+function updateBulkDeleteUI(){
+  const n=S.selectedEpisodeIds?S.selectedEpisodeIds.size:0;
+  const countEl=$('wp-select-count'),btn=$('wp-bulk-delete-btn');
+  if(!countEl||!btn)return;
+  if(S.selectMode&&n>0){
+    countEl.style.display='inline';countEl.textContent=n+' selected';
+    btn.style.display='inline-block';
+  }else{
+    countEl.style.display='none';
+    btn.style.display='none';
+  }
+}
+function bulkDeleteEpisodes(){
+  const ids=Array.from(S.selectedEpisodeIds||[]);
+  if(!ids.length||!db)return;
+  showConfirmModal(
+    `delete ${ids.length} video${ids.length===1?'':'s'}?`,
+    'this permanently removes the selected videos from this show.',
+    async()=>{
+      try{
+        const batch=db.batch();
+        ids.forEach(id=>batch.delete(db.collection('nosirt_show_episodes').doc(id)));
+        await batch.commit();
+        const commentTargets=(S.comments||[]).filter(c=>ids.includes(c.episodeId));
+        if(commentTargets.length){
+          const cbatch=db.batch();
+          commentTargets.forEach(c=>cbatch.delete(db.collection('nosirt_comments').doc(c.id)));
+          await cbatch.commit();
+        }
+        if(currentEpisode&&ids.includes(currentEpisode.id)){
+          currentEpisode=null;$('wp-placeholder').style.display='flex';$('wp-now-title').textContent='';
+        }
+        toast(ids.length+' video(s) deleted');
+        S.selectMode=false;S.selectedEpisodeIds=new Set();
+        const toggleBtn=$('wp-select-toggle');if(toggleBtn)toggleBtn.textContent='select';
+        updateBulkDeleteUI();
+      }catch(err){
+        console.error('bulk delete error:',err);
+        toast("couldn't delete selected videos");
+      }
+    }
+  );
+}
+
+// ── comments ──
+function renderComments(){
+  const wrap=$('wp-comment-list');
+  if(!wrap||!S.currentCommentEpisodeId)return;
+  const list=(S.comments||[]).filter(c=>c.episodeId===S.currentCommentEpisodeId).sort((a,b)=>b.createdAt-a.createdAt);
+  if(!list.length){
+    wrap.innerHTML='<div class="wp-ep-empty" style="padding:14px 0">no comments yet — say something first.</div>';
+    return;
+  }
+  wrap.innerHTML=list.map(c=>`
+    <div class="wp-comment-item">
+      <div class="wp-comment-head">
+        <span class="wp-comment-name">${esc(c.name)}</span>
+        <span class="wp-comment-time">${typeof timeAgo==='function'?timeAgo(c.createdAt):''}</span>
+        ${S.adminUnlocked?`<button class="wp-comment-del" onclick="deleteComment('${c.id}')" title="delete">✕</button>`:''}
+      </div>
+      <div class="wp-comment-text">${esc(c.text)}</div>
+    </div>`).join('');
+}
+function submitComment(){
+  if(!S.currentCommentEpisodeId){toast('pick a video first');return;}
+  const name=filt($('wp-comment-name').value.trim());
+  const text=filt($('wp-comment-text').value.trim());
+  if(!name||!text){toast('add your name and a comment');return;}
+  const id='c'+Date.now();
+  fbSaveComment(id,{id,episodeId:S.currentCommentEpisodeId,name,text,createdAt:Date.now()});
+  $('wp-comment-text').value='';
+  toast('comment posted');
+}
+function deleteComment(id){
+  if(!S.adminUnlocked)return;
+  fbDeleteComment(id);
 }
