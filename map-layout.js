@@ -42,10 +42,22 @@ function enterSite(skipAnim){
     // visitor's first interaction anywhere on the page.
     toggleMusic('lofi');
     // Load shared data from Firebase (live-synced across all visitors)
-    fbListen('posts', d=>{ S.posts=JSON.parse(d.v||'[]'); renderPosts(); });
-    fbListen('recs',  d=>{ S.recs=JSON.parse(d.v||'null')||[]; renderRecs(); });
+    // v01.13: posts/recs/screams moved off the old single-blob-per-
+    // collection storage (see core.js for why — real data-race bug) to
+    // one Firestore doc per item. Migrate any existing data first, then
+    // set up the new live listeners. notes stays on the old system —
+    // it's one shared text field with no multi-writer race to fix.
+    if(typeof ensureLegacyDataMigrated==='function')ensureLegacyDataMigrated();
+    if(typeof fbListenCollection==='function'){
+      fbListenCollection('nosirt_posts', items=>{ S.posts=(items||[]).sort((a,b)=>b.ts-a.ts); renderPosts(); });
+      fbListenCollection('nosirt_recs',  items=>{ S.recs=(items||[]).sort((a,b)=>b.ts-a.ts); renderRecs(); });
+      fbListenCollection('nosirt_screams',items=>{
+        S.screams=(items||[]).sort((a,b)=>a.ts-b.ts);
+        renderScreams();
+        if(typeof cleanupExpiredScreamsOnce==='function')cleanupExpiredScreamsOnce();
+      });
+    }
     fbListen('notes', d=>{ S.notes=d.v||''; renderNotes(); });
-    fbListen('screams',d=>{ S.screams=JSON.parse(d.v||'[]'); renderScreams(); });
     // v01.08: global chat — settings (media mode) + messages, both live
     fbListen('chat_settings', d=>{ if(typeof onChatSettingsUpdate==='function')onChatSettingsUpdate(d); });
     if(typeof fbListenChatMsgs==='function'){
@@ -56,6 +68,10 @@ function enterSite(skipAnim){
       fbListenPresence(items=>{ if(typeof onPresenceUpdate==='function')onPresenceUpdate(items); });
     }
     if(typeof startPresenceHeartbeat==='function')startPresenceHeartbeat();
+    // v01.14: living-map environment — location + weather plumbing
+    // (see environment.js). Fire-and-forget, same pattern as the other
+    // init calls here — nothing else depends on it being ready yet.
+    if(typeof startEnvironmentRefreshLoop==='function')startEnvironmentRefreshLoop();
     // v01.07: which worlds/banner are switched on — live-synced so an
     // admin toggle takes effect for everyone immediately.
     fbListen('features', d=>{
@@ -378,6 +394,44 @@ function currentRoutePath(){
   return location.pathname.replace(/^\/|\/$/g,'').toLowerCase();
 }
 
+// v01.11: plain, non-smart way to land on the wireless page + sync the
+// URL — used when a caller (like the dedicated Midnight Archive badge)
+// has already decided exactly what should be shown and just needs the
+// page + URL to catch up. Bypasses openWirelessSmart() entirely.
+function gotoWirelessPageDirect(){
+  const url='/wireless';
+  if(location.pathname!==url)history.pushState({path:'wireless'},'',url);
+  showPage('wireless');
+}
+
+// v01.11: the general-purpose "go to wireless" behavior — used by the
+// bottom-nav wireless button, the map's wireless pin, direct/bookmarked
+// URLs, browser back/forward, and the music modal's "The Wireless"
+// option. Three cases:
+//  1. Already viewing a specific show's player → step back out to the
+//     main wireless page (the show grid).
+//  2. Something is actively playing from wireless and we're not
+//     already looking at it → jump straight to that show/episode.
+//  3. Nothing playing → the main wireless page.
+function openWirelessSmart(){
+  if(S.view==='wireless' && S.currentShowId){
+    S.currentShowId=null;
+    showPage('wireless');
+    return;
+  }
+  if(activeMusic==='podcast' && typeof currentEpisode!=='undefined' && currentEpisode && currentEpisode.showId){
+    if(S.currentShowId!==currentEpisode.showId){
+      S.currentShowId=currentEpisode.showId;
+      if(typeof refreshCurrentShowEpisodes==='function')refreshCurrentShowEpisodes();
+    }
+    showPage('wireless');
+    if(typeof setActiveShow==='function')setActiveShow(currentEpisode.showId,{autoplay:false});
+    return;
+  }
+  S.currentShowId=null;
+  showPage('wireless');
+}
+
 // Central router — shows the right view for a path. Pass push:false when
 // responding to the browser's own back/forward (don't add a new entry).
 function navigateTo(path,push){
@@ -393,6 +447,7 @@ function navigateTo(path,push){
   const internal=ROUTE_TO_PAGE[path];
   if(internal){
     if(S.featureToggles[internal]===false){showUnderReviewNote(internal);showMap();return;}
+    if(internal==='wireless'){openWirelessSmart();return;}
     showPage(internal);
   }else showMap();
 }
@@ -593,31 +648,37 @@ function stopAmbientMusic(){
 function toggleMusic(key){
   if(key==='podcast'){
     if(activeMusic==='podcast'){
-      // tapping podcast again → stop it
+      // tapping "The Wireless" again while it's already the active sound → stop it
       if(ytPlayer)ytPlayer.pauseVideo();
       activeMusic=null;
       updateNP('nothing playing · tap to start');
       document.querySelectorAll('.music-opt').forEach(o=>o.classList.remove('playing'));
-    }else{
-      stopAmbientMusic(); // podcast takes over from whatever sound was playing
-      activeMusic='podcast';
-      document.querySelectorAll('.music-opt').forEach(o=>o.classList.remove('playing'));
-      const el=document.querySelector(`.music-opt[data-key="podcast"]`);
-      if(el)el.classList.add('playing');
-      
-      // v01.06: Background playback — resumes in place if already picked once,
-      // otherwise opens the wireless page directly into the default show
-      // (Midnight Archive) so the button always takes you to the podcast
-      // itself, never the shows browser.
-      const result=startPodcastFromMusicBar();
-      if(result===false){
-        if(typeof openDefaultShowFromMusicBar==='function')openDefaultShowFromMusicBar();
-        else navTo('wireless');
-      }else if(result===null){
-        updateNP('🎙 add a video first');
-        toast('no episodes yet — add one below');
-      }
+      closeMusicModal();
+      return;
     }
+    // v01.11/01.12: "The Wireless" modal option is the general sound
+    // picker (distinct from the dedicated "podcast" badge, which is
+    // always Midnight Archive — see handleLiveBadgeClick in wireless.js).
+    // Same start/stop toggle as Ancient/Lofi/Dark: resumes whatever was
+    // last loaded if anything was, plays nothing (silently) if not yet
+    // — no page navigation, same as the other sound options.
+    stopAmbientMusic(); // wireless takes over from whatever ambient sound was playing
+    activeMusic='podcast';
+    document.querySelectorAll('.music-opt').forEach(o=>o.classList.remove('playing'));
+    const el=document.querySelector(`.music-opt[data-key="podcast"]`);
+    if(el)el.classList.add('playing');
+    if(typeof currentEpisode!=='undefined' && currentEpisode && ytPlayer){
+      ytPlayer.playVideo();
+      updateNP('🎙 '+currentEpisode.title);
+    }else{
+      updateNP('🎙 The Wireless');
+    }
+    // v01.12: no navigation here on purpose — selecting "The Wireless"
+    // from the sounds menu should behave exactly like Ancient/Lofi/Dark:
+    // it just starts/resumes playback wherever you already are. Jumping
+    // to the grid or the currently-playing show is the bottom-nav
+    // wireless button's job specifically (and the map pin) — see
+    // openWirelessSmart() — not this modal option's.
     closeMusicModal();
     return;
   }
@@ -669,7 +730,14 @@ function startCreatures(){} // no-op: canvas handles witches/dragons
 // CANVAS MAP DRAWING ENGINE
 // ═══════════════════════════════════════
 let mapCtx=null;
-const mapState={clouds:[],birds:[],witches:[],dragons:[],figures:[],waveOff:0,time:0};
+const mapState={clouds:[],birds:[],witches:[],dragons:[],figures:[],whales:[],boats:[],
+  rain:[],snow:[],windStreaks:[],lightning:{flash:0,nextStrikeAt:0},stars:[],
+  leaves:[],festivalDecor:[],festivalDecorId:null,
+  waveOff:0,time:0};
+// v01.14: coastal point the pier juts out from, and the point out at
+// open sea the daily ship sails to and from.
+const PIER_BASE={x:2340,y:600,angle:0.35};
+const PIER_SEA_POINT={x:2600,y:520};
 
 function initMapCanvas(){
   const cv=$('map-canvas');if(!cv)return;
@@ -877,11 +945,250 @@ function drawMapCanvas(){
     if(d.x>MAP_W+120)mapState.dragons.splice(i,1);
   }
 
-  // CLOUDS
+  // v01.14: PIER + DAILY SHIP
+  // Ship position cycles smoothly once every 24h of the visitor's own
+  // clock: docked at the pier around midnight, farthest out at sea
+  // around midday, back by the next midnight. No stored state needed —
+  // it's a pure function of the current time, so it's already "mid-
+  // journey" correctly no matter when someone loads the page.
+  mPier(ctx,PIER_BASE.x,PIER_BASE.y,PIER_BASE.angle);
+  {
+    const now=new Date();
+    const hourFrac=(now.getHours()+now.getMinutes()/60)/24;
+    const shipT=(1-Math.cos(hourFrac*Math.PI*2))/2; // 0 at pier, 1 = farthest out
+    const dockX=PIER_BASE.x+Math.cos(PIER_BASE.angle)*70,dockY=PIER_BASE.y+Math.sin(PIER_BASE.angle)*70;
+    const sx=dockX+(PIER_SEA_POINT.x-dockX)*shipT;
+    const sy=dockY+(PIER_SEA_POINT.y-dockY)*shipT+Math.sin(shipT*Math.PI)*-18;
+    mShip(ctx,sx,sy,1,t*1.4,true);
+  }
+
+  // WHALES (rare, like witches/dragons above)
+  if(mapState.whales.length<1&&Math.random()<.00008)
+    mapState.whales.push({x:2500+Math.random()*500,y:1900+Math.random()*900,spd:0.25+Math.random()*.2,dir:Math.random()>.5?1:-1});
+  for(let i=mapState.whales.length-1;i>=0;i--){
+    const w=mapState.whales[i];w.x+=w.spd*w.dir;
+    mWhale(ctx,w.x,w.y,t);
+    if(w.x>MAP_W+80||w.x<-80)mapState.whales.splice(i,1);
+  }
+
+  // BOATS (rare, a plain sailboat crossing open water)
+  if(mapState.boats.length<1&&Math.random()<.00015)
+    mapState.boats.push({x:-60,y:2000+Math.random()*700,spd:0.7+Math.random()*.5});
+  for(let i=mapState.boats.length-1;i>=0;i--){
+    const b=mapState.boats[i];b.x+=b.spd;
+    mBoat(ctx,b.x,b.y,t,true);
+    if(b.x>MAP_W+80)mapState.boats.splice(i,1);
+  }
+
+  // v01.14 step 3: WEATHER — computed once per frame from S.environment.
+  // Everything below (cloud density/color, rain, snow, wind streaks,
+  // lightning) reacts to this single object.
+  const wv=(typeof computeWeatherVisualState==='function')?computeWeatherVisualState():{kind:'clear',windy:false,cloudCover:0,isDay:true,intensity:0};
+
+  // CLOUDS — count/opacity/darkness now follow real cloud cover instead
+  // of always being the same fixed decorative amount, and move faster
+  // when it's windy.
+  const cloudBoost = wv.kind==='thunder'?.4 : wv.kind==='rain'||wv.kind==='snow'?.22 : wv.kind==='cloudy'?.1 : wv.kind==='clear'?-.35 : 0;
+  const cloudDark = wv.kind==='thunder'?.55 : wv.kind==='rain'?.22 : 0;
   mapState.clouds.forEach(cl=>{
-    cl.x+=cl.speed;if(cl.x-cl.w>MAP_W)cl.x=-cl.w;
-    mCloud(ctx,cl.x,cl.y,cl.w,cl.h,cl.opacity);
+    cl.x+=cl.speed*(wv.windy?2.4:1);if(cl.x-cl.w>MAP_W)cl.x=-cl.w;
+    const op=Math.max(.04,Math.min(1,cl.opacity+cloudBoost));
+    mCloud(ctx,cl.x,cl.y,cl.w,cl.h,op,cloudDark);
   });
+
+  // RAIN — sparse, stylized streaks that respawn once they fall off the
+  // bottom, spread across the whole map so it reads as raining wherever
+  // you happen to be looking, without needing hundreds of particles.
+  if(wv.kind==='rain'||wv.kind==='thunder'){
+    const targetCount=wv.kind==='thunder'?110:80;
+    while(mapState.rain.length<targetCount)
+      mapState.rain.push({x:Math.random()*MAP_W,y:Math.random()*MAP_H,len:14+Math.random()*16,spd:16+Math.random()*10});
+    if(mapState.rain.length>targetCount)mapState.rain.length=targetCount;
+    ctx.save();ctx.strokeStyle='rgba(200,215,230,.38)';ctx.lineWidth=1.6;ctx.lineCap='round';
+    mapState.rain.forEach(d=>{
+      d.y+=d.spd;d.x-=wv.windy?2.2:0.6;
+      if(d.y>MAP_H){d.y=-20;d.x=Math.random()*MAP_W;}
+      if(d.x<-20)d.x=MAP_W+20;
+      ctx.beginPath();ctx.moveTo(d.x,d.y);ctx.lineTo(d.x-(wv.windy?7:2),d.y+d.len);ctx.stroke();
+    });
+    ctx.restore();
+  }else if(mapState.rain.length){mapState.rain.length=0;}
+
+  // SNOW — soft drifting dots, gentler than rain
+  if(wv.kind==='snow'){
+    const targetCount=70;
+    while(mapState.snow.length<targetCount)
+      mapState.snow.push({x:Math.random()*MAP_W,y:Math.random()*MAP_H,r:2+Math.random()*3,spd:2+Math.random()*2,drift:Math.random()*Math.PI*2});
+    if(mapState.snow.length>targetCount)mapState.snow.length=targetCount;
+    ctx.save();ctx.fillStyle='rgba(255,255,255,.75)';
+    mapState.snow.forEach(f=>{
+      f.y+=f.spd;f.drift+=0.02;f.x+=Math.sin(f.drift)*1.1+(wv.windy?1.6:0);
+      if(f.y>MAP_H){f.y=-10;f.x=Math.random()*MAP_W;}
+      if(f.x>MAP_W+10)f.x=-10;if(f.x<-10)f.x=MAP_W+10;
+      ctx.beginPath();ctx.arc(f.x,f.y,f.r,0,Math.PI*2);ctx.fill();
+    });
+    ctx.restore();
+  }else if(mapState.snow.length){mapState.snow.length=0;}
+
+  // WIND — drifting leaf/dust streaks on genuinely windy days,
+  // independent of whatever precipitation (or lack of it) is happening
+  if(wv.windy){
+    const targetCount=36;
+    while(mapState.windStreaks.length<targetCount)
+      mapState.windStreaks.push({x:Math.random()*MAP_W,y:Math.random()*MAP_H,spd:9+Math.random()*7,len:10+Math.random()*8,drift:Math.random()*Math.PI*2});
+    if(mapState.windStreaks.length>targetCount)mapState.windStreaks.length=targetCount;
+    ctx.save();ctx.strokeStyle='rgba(200,180,120,.28)';ctx.lineWidth=1.4;ctx.lineCap='round';
+    mapState.windStreaks.forEach(w=>{
+      w.x+=w.spd;w.drift+=0.05;const dy=Math.sin(w.drift)*3;
+      if(w.x>MAP_W+20){w.x=-20;w.y=Math.random()*MAP_H;}
+      ctx.beginPath();ctx.moveTo(w.x,w.y+dy);ctx.lineTo(w.x-w.len,w.y+dy-2);ctx.stroke();
+    });
+    ctx.restore();
+  }else if(mapState.windStreaks.length){mapState.windStreaks.length=0;}
+
+  // LIGHTNING — an occasional screen flash + thunder rumble
+  if(wv.kind==='thunder'){
+    if(!mapState.lightning.nextStrikeAt)mapState.lightning.nextStrikeAt=performance.now()+3000+Math.random()*6000;
+    if(performance.now()>=mapState.lightning.nextStrikeAt){
+      mapState.lightning.flash=1;
+      mapState.lightning.nextStrikeAt=performance.now()+4000+Math.random()*9000;
+      if(typeof playThunderRumble==='function')setTimeout(()=>playThunderRumble(),150+Math.random()*350);
+    }
+    if(mapState.lightning.flash>0.01){
+      ctx.save();ctx.fillStyle=`rgba(230,238,255,${mapState.lightning.flash*.55})`;ctx.fillRect(0,0,W,H);ctx.restore();
+      mapState.lightning.flash*=0.82;
+    }else mapState.lightning.flash=0;
+  }else{
+    mapState.lightning.flash=0;mapState.lightning.nextStrikeAt=0;
+  }
+
+  // v01.14 step 5: SEASON — a translucent full-canvas wash (same
+  // technique as the day/night tint below, layered underneath it) plus
+  // falling leaves in the fall. Hemisphere-aware — see computeSeason()
+  // in environment.js.
+  {
+    const season=(typeof computeSeason==='function')?computeSeason():'spring';
+    const SEASON_WASH={
+      spring:{color:'rgba(150,225,120,1)',alpha:.08},
+      summer:{color:'rgba(215,185,95,1)', alpha:.10},
+      fall:  {color:'rgba(180,110,55,1)', alpha:.13},
+      winter:{color:'rgba(232,240,250,1)',alpha:.20}
+    };
+    const sw=SEASON_WASH[season]||SEASON_WASH.spring;
+    ctx.save();ctx.globalAlpha=sw.alpha;ctx.fillStyle=sw.color;ctx.fillRect(0,0,W,H);ctx.restore();
+
+    if(season==='fall'){
+      const targetCount=26;
+      while(mapState.leaves.length<targetCount)
+        mapState.leaves.push({x:Math.random()*MAP_W,y:Math.random()*MAP_H,
+          emoji:Math.random()>.5?'🍂':'🍁',size:14+Math.random()*8,
+          spd:1+Math.random()*1.3,drift:Math.random()*Math.PI*2});
+      if(mapState.leaves.length>targetCount)mapState.leaves.length=targetCount;
+      ctx.save();ctx.textAlign='center';ctx.textBaseline='middle';ctx.globalAlpha=.75;
+      mapState.leaves.forEach(lf=>{
+        lf.y+=lf.spd;lf.drift+=0.035;lf.x+=Math.sin(lf.drift)*1.8+0.6; // gentle breeze, always a little windy in fall
+        if(lf.y>MAP_H){lf.y=-14;lf.x=Math.random()*MAP_W;}
+        if(lf.x>MAP_W+14)lf.x=-14;
+        ctx.font=lf.size+'px serif';
+        ctx.fillText(lf.emoji,lf.x,lf.y);
+      });
+      ctx.restore();
+    }else if(mapState.leaves.length){ mapState.leaves.length=0; }
+  }
+
+  // v01.14 step 4: DAY/NIGHT — sky tint, sun/moon arc, stars
+  {
+    const dn=(typeof computeDayNightPhase==='function')?computeDayNightPhase():{isDaytime:true,sunPos:.5,twilight:0,nightAmount:0};
+
+    // Sky tint wash — dawn/dusk orange, night deep blue. Drawn as a
+    // translucent full-canvas overlay so it colors everything already
+    // drawn (ocean, land, weather) without needing to touch every
+    // individual gradient.
+    if(dn.twilight>0.02){
+      ctx.save();ctx.globalAlpha=dn.twilight*.28;
+      ctx.fillStyle='rgba(255,140,60,1)';ctx.fillRect(0,0,W,H);
+      ctx.restore();
+    }
+    if(dn.nightAmount>0.02){
+      ctx.save();ctx.globalAlpha=dn.nightAmount*.42*(1-dn.twilight*.5);
+      ctx.fillStyle='rgba(10,16,42,1)';ctx.fillRect(0,0,W,H);
+      ctx.restore();
+    }
+
+    // Stars — fixed field, fade in with nightAmount, gentle twinkle
+    if(dn.nightAmount>0.05){
+      if(!mapState.stars.length){
+        for(let i=0;i<130;i++)
+          mapState.stars.push({x:Math.random()*W,y:Math.random()*H*.55,r:0.6+Math.random()*1.4,ph:Math.random()*Math.PI*2});
+      }
+      ctx.save();
+      const baseA=dn.nightAmount*(1-dn.twilight*.6);
+      mapState.stars.forEach(s=>{
+        const tw=0.55+0.45*Math.sin(t*1.3+s.ph);
+        ctx.globalAlpha=baseA*tw;
+        ctx.fillStyle='rgba(255,255,245,1)';
+        ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,Math.PI*2);ctx.fill();
+      });
+      ctx.restore();
+    }
+
+    // Sun/moon — arcs across the upper portion of the map, peaking in
+    // the middle, low at the rise/set edges (a stylized "storybook map"
+    // sky band, same spirit as the compass rose in the corner — not a
+    // literal side-view horizon).
+    const arcX0=380,arcX1=2820,peakY=140,edgeY=560;
+    const sp=dn.sunPos;
+    const bodyX=arcX0+(arcX1-arcX0)*sp;
+    const bodyY=edgeY-(edgeY-peakY)*Math.sin(sp*Math.PI);
+    ctx.save();
+    if(dn.isDaytime){
+      const glow=ctx.createRadialGradient(bodyX,bodyY,0,bodyX,bodyY,70);
+      glow.addColorStop(0,'rgba(255,224,140,.55)');glow.addColorStop(1,'rgba(255,224,140,0)');
+      ctx.fillStyle=glow;ctx.beginPath();ctx.arc(bodyX,bodyY,70,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle=dn.twilight>0.3?'rgba(255,176,110,.85)':'rgba(255,232,170,.85)';
+      ctx.beginPath();ctx.arc(bodyX,bodyY,26,0,Math.PI*2);ctx.fill();
+    }else{
+      const glow=ctx.createRadialGradient(bodyX,bodyY,0,bodyX,bodyY,50);
+      glow.addColorStop(0,'rgba(210,220,255,.32)');glow.addColorStop(1,'rgba(210,220,255,0)');
+      ctx.fillStyle=glow;ctx.beginPath();ctx.arc(bodyX,bodyY,50,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='rgba(224,228,240,.82)';
+      ctx.beginPath();ctx.arc(bodyX,bodyY,19,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='rgba(10,16,42,.5)';
+      ctx.beginPath();ctx.arc(bodyX+7,bodyY-4,16,0,Math.PI*2);ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // v01.14 step 5: FESTIVAL DECORATIONS — a light color wash plus
+  // scattered themed emoji, drawn above the day/night tint so they stay
+  // clearly readable at any time of day. Config-driven — see the
+  // FESTIVALS list in environment.js to add/change occasions.
+  {
+    const fest=(typeof getActiveFestival==='function')?getActiveFestival():null;
+    if(fest){
+      if(mapState.festivalDecorId!==fest.id){
+        mapState.festivalDecor=[];
+        for(let i=0;i<22;i++){
+          mapState.festivalDecor.push({
+            x:420+Math.random()*2000,y:280+Math.random()*1550,
+            emoji:fest.emoji[Math.floor(Math.random()*fest.emoji.length)],
+            size:22+Math.random()*14,bob:Math.random()*Math.PI*2
+          });
+        }
+        mapState.festivalDecorId=fest.id;
+      }
+      ctx.save();ctx.globalAlpha=.09;ctx.fillStyle=fest.tint;ctx.fillRect(0,0,W,H);ctx.restore();
+      ctx.save();ctx.textAlign='center';ctx.textBaseline='middle';ctx.globalAlpha=.9;
+      mapState.festivalDecor.forEach(d=>{
+        const bobY=Math.sin(t*0.6+d.bob)*4;
+        ctx.font=d.size+'px serif';
+        ctx.fillText(d.emoji,d.x,d.y+bobY);
+      });
+      ctx.restore();
+    }else if(mapState.festivalDecor.length){
+      mapState.festivalDecor=[];mapState.festivalDecorId=null;
+    }
+  }
 
   // VIGNETTE
   const vig=ctx.createRadialGradient(W/2,H/2,W*.25,W/2,H/2,W*.72);
@@ -1117,6 +1424,55 @@ function mWireless(ctx,cx,cy,t){
   ctx.restore();
 }
 
+// v01.14: ocean life — a small pier with a ship that sails out and back
+// once per day (driven purely by the local clock, no dependencies), plus
+// whales and boats that cross the water occasionally, same spawn pattern
+// as the witches/dragons above.
+function mPier(ctx,x,y,angle){
+  ctx.save();ctx.translate(x,y);ctx.rotate(angle);
+  ctx.strokeStyle='rgba(90,66,42,.7)';ctx.lineWidth=10;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(70,0);ctx.stroke();
+  ctx.strokeStyle='rgba(60,42,26,.65)';ctx.lineWidth=4;
+  for(let i=0;i<=70;i+=14){
+    ctx.beginPath();ctx.moveTo(i,-7);ctx.lineTo(i,7);ctx.stroke();
+  }
+  ctx.fillStyle='rgba(60,42,26,.6)';
+  ctx.beginPath();ctx.arc(70,-6,4,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(70,6,4,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+function mShip(ctx,x,y,scale,bob,facingRight){
+  ctx.save();ctx.translate(x,y+Math.sin(bob)*2*scale);
+  if(!facingRight)ctx.scale(-1,1);
+  ctx.scale(scale,scale);
+  ctx.globalAlpha=.72;
+  // hull
+  ctx.fillStyle='rgba(58,40,26,.88)';
+  ctx.beginPath();ctx.moveTo(-16,4);ctx.lineTo(16,4);ctx.lineTo(11,12);ctx.lineTo(-11,12);ctx.closePath();ctx.fill();
+  // mast + sail
+  ctx.strokeStyle='rgba(50,36,24,.85)';ctx.lineWidth=1.5;
+  ctx.beginPath();ctx.moveTo(0,4);ctx.lineTo(0,-22);ctx.stroke();
+  ctx.fillStyle='rgba(224,210,182,.82)';
+  ctx.beginPath();ctx.moveTo(1,-21);ctx.lineTo(1,-2);ctx.lineTo(15,-4);ctx.closePath();ctx.fill();
+  ctx.restore();
+}
+function mWhale(ctx,x,y,t){
+  ctx.save();ctx.translate(x,y);ctx.globalAlpha=.55;
+  ctx.fillStyle='rgba(40,58,72,.85)';
+  ctx.beginPath();ctx.ellipse(0,0,26,9,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.moveTo(-24,0);ctx.quadraticCurveTo(-34,-10,-40,-2);ctx.quadraticCurveTo(-34,2,-24,4);ctx.closePath();ctx.fill();
+  // spout, on a slow cycle
+  const spout=Math.max(0,Math.sin(t*1.4));
+  if(spout>.55){
+    ctx.strokeStyle=`rgba(210,224,232,${(spout-.55)*1.6})`;ctx.lineWidth=3;ctx.lineCap='round';
+    ctx.beginPath();ctx.moveTo(8,-8);ctx.lineTo(8,-8-spout*16);ctx.stroke();
+  }
+  ctx.restore();
+}
+function mBoat(ctx,x,y,t,facingRight){
+  mShip(ctx,x,y,0.7,t*2,facingRight);
+}
+
 function mIsland(ctx,cx,cy,rx,ry){
   ctx.save();
   ctx.fillStyle='#c8b878';ctx.beginPath();ctx.ellipse(cx,cy,rx+6,ry+6,0,0,Math.PI*2);ctx.fill();
@@ -1147,8 +1503,11 @@ function mFigure(ctx,x,y,step,dir){
   ctx.restore();
 }
 
-function mCloud(ctx,x,y,w,h,op){
-  ctx.save();ctx.globalAlpha=op;ctx.fillStyle='rgba(255,255,255,.88)';
+function mCloud(ctx,x,y,w,h,op,dark){
+  dark=dark||0;
+  ctx.save();ctx.globalAlpha=op;
+  const g=Math.round(255-dark*175),b=Math.round(255-dark*145);
+  ctx.fillStyle=`rgba(${g},${g},${b},.88)`;
   const cx=x+w/2,cy=y+h/2;
   ctx.beginPath();ctx.ellipse(cx,cy,w/2,h/2,0,0,Math.PI*2);ctx.fill();
   ctx.beginPath();ctx.ellipse(cx-w*.22,cy,w*.3,h*.52,0,0,Math.PI*2);ctx.fill();
@@ -1318,6 +1677,10 @@ function openProfilePanel() {
   const panel = $('profile-panel');
   if (panel) {
     panel.style.display = 'flex';
+    // v01.11: was a dead "v${CURRENT_VERSION}" literal sitting in raw
+    // HTML (never actually evaluated as JS) — now set here for real.
+    const vEl = $('profile-version-display');
+    if (vEl) vEl.textContent = CURRENT_VERSION;
     loadProfileData();
   }
 }
@@ -1338,6 +1701,7 @@ async function loadProfileData() {
     loadChangelogIfAdmin();
     renderFeatureToggleList();
     if(typeof renderChatAdminSettings==='function')renderChatAdminSettings();
+    if(typeof renderEnvPreviewControls==='function')renderEnvPreviewControls();
   }
 }
 
@@ -1345,13 +1709,18 @@ function loadChangelogIfAdmin() {
   if (!S.adminUnlocked) return;
   const changelogDiv = $('profile-changelog');
   changelogDiv.innerHTML = '';
-  
+
   VERSION_HISTORY.forEach((v, idx) => {
     const item = document.createElement('div');
-    item.style.cssText = 'margin-bottom:8px;padding:6px;background:rgba(200,137,42,.08);border-radius:4px';
+    item.style.cssText = 'margin-bottom:6px;border-radius:4px;overflow:hidden';
+    const changesHtml = v.changes.map(ch => `• ${esc(ch)}`).join('<br>');
     item.innerHTML = `
-      <div style="font-weight:bold;color:var(--amber)">v${v.version}</div>
-      <div>${v.changes.map(ch => `• ${ch}`).join('<br>')}</div>
+      <div class="changelog-version-row" onclick="const b=this.nextElementSibling;b.style.display=b.style.display==='block'?'none':'block';"
+        style="cursor:pointer;padding:6px;color:#a8e05f;font-weight:bold;font-family:'Cinzel Decorative',serif;
+        display:flex;align-items:center;justify-content:space-between;background:rgba(200,137,42,.08)">
+        <span>v${esc(v.version)}</span><span style="opacity:.5;font-size:.65rem">tap to expand</span>
+      </div>
+      <div class="changelog-version-body" style="display:none;padding:8px 6px;background:rgba(200,137,42,.04)">${changesHtml}</div>
     `;
     changelogDiv.appendChild(item);
   });
@@ -1405,6 +1774,7 @@ async function handleAdminLoginProfile() {
     loadChangelogIfAdmin();
     renderFeatureToggleList();
     if(typeof renderChatAdminSettings==='function')renderChatAdminSettings();
+    if(typeof renderEnvPreviewControls==='function')renderEnvPreviewControls();
     toast('admin mode unlocked');
     updateAdminUI();
     renderEpisodes(); // refresh so wp-ep-admin edit/delete buttons show immediately

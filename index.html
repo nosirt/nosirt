@@ -63,6 +63,7 @@
       <button class="map-tool" onclick="zoomAt(1.18,innerWidth/2,innerHeight/2)" title="zoom in" aria-label="zoom in">+</button>
       <button class="map-tool" onclick="zoomAt(0.84,innerWidth/2,innerHeight/2)" title="zoom out" aria-label="zoom out">-</button>
       <button id="map-reset" class="map-tool" onclick="resetMap()" title="center map" aria-label="center map">⊕</button>
+      <button id="env-mute-btn" class="map-tool" onclick="toggleEnvMuted()" title="mute environment sounds (rain, wind, thunder)" aria-label="mute environment sounds">🔊</button>
     </div>
   </div>
 </div>
@@ -523,7 +524,7 @@
 
     <!-- Version info -->
     <div style="border-top:1px solid rgba(200,137,42,.15);padding-top:12px">
-      <div style="font-family:'Cinzel Decorative',serif;font-size:.9rem;color:var(--amber);margin-bottom:8px">v${CURRENT_VERSION}</div>
+      <div id="profile-version-display" style="font-family:'Cinzel Decorative',serif;font-size:.9rem;color:var(--amber);margin-bottom:8px"></div>
       <div id="profile-changelog" style="display:none;max-height:150px;overflow-y:auto;font-size:.7rem;color:var(--fog);line-height:1.6">
         <!-- populated if admin unlocked -->
       </div>
@@ -546,6 +547,8 @@
         </div>
         <!-- v01.08: global chat media settings -->
         <div id="chat-admin-settings" style="text-align:left;border-top:1px solid rgba(200,137,42,.15);margin-top:4px;padding-top:10px;margin-bottom:10px"></div>
+        <!-- v01.14 step 4: weather/time preview -->
+        <div id="env-preview-controls" style="text-align:left;border-top:1px solid rgba(200,137,42,.15);margin-top:4px;padding-top:10px;margin-bottom:10px"></div>
         <button class="sq-submit" onclick="handleAdminLogoutProfile()" style="width:100%;font-size:.75rem">lock</button>
       </div>
     </div>
@@ -836,6 +839,7 @@
 <script src="keep.js"></script>
 <script src="wireless.js"></script>
 <script src="chat.js"></script>
+<script src="environment.js"></script>
 
 </body>
 </html>

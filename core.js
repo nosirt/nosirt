@@ -8,6 +8,55 @@
 // ═══ VERSION HISTORY ═══
 const VERSION_HISTORY = [
   {
+    version: '01.14',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'Admin panel: version history is now collapsed by default — version numbers shown in lime, tap one to expand just that version\'s changes, instead of dumping the whole log',
+      '"Living map" project, part 1 — ocean life: a small pier now has a ship that sails out to sea and back once every 24 hours (driven by the clock, always mid-journey correctly whenever the map loads), plus whales and boats that cross the water occasionally, same rare-spawn pattern as the witches/dragons',
+      '"Living map" project, part 2 — location + weather plumbing: the map now quietly gets an approximate location (asks permission via the browser first; falls back to IP-based location with no prompt if declined) and fetches live weather for it. Nothing visual yet — this is just the data now flowing in, ready for the next part',
+      'Added an environment-sounds mute button next to the map zoom controls, ready for when rain/wind/thunder sound gets added',
+      'Hemisphere-aware: if location is available, latitude decides Northern vs Southern for anything season-related later; falls back to Northern Hemisphere if location isn\'t available at all',
+      '"Living map" project, part 3 — weather made visible: cloud cover, rain, snow, and wind now reflect real current weather at your location. Clouds thicken and darken for storms, thin out on clear days, and move faster when it\'s windy. Thunderstorms add occasional lightning flashes with a timed thunder rumble. Wind adds its own drifting streak effect independent of rain/snow',
+      'Added synthesized ambient sound for rain/snow/wind/thunder (built from noise + filters, same technique as the Void\'s pop sound and Ancient ambience \u2014 no audio files) \u2014 respects the mute button added in part 2',
+      '"Living map" project, part 4 — day/night: the sky now tints toward dawn/dusk orange and night blue based on real sunrise/sunset at your location (falls back to a generic 6am/8pm schedule if location isn\'t available), a sun or moon arcs across the map accordingly, and stars fade in at night',
+      'NEW: admin panel has a "preview weather/time" tool — jump the map into any weather (clear/cloudy/rain/snow/thunder/fog), windy or not, and any time of day (dawn/day/dusk/night) to see what it looks like, without waiting for real conditions to match. This is local to your own browser only — it never changes what real visitors see. A "stop previewing" button returns to real weather/time. Festival/seasonal preview will land in this same panel once that part is built',
+      '"Living map" project, part 5 — seasons + festivals: the map now tints toward spring green, summer tan, fall orange/grey, or winter white based on the real calendar and your hemisphere (flips automatically for Southern Hemisphere visitors using their real latitude; falls back to Northern if location isn\'t available). Fall adds drifting falling leaves',
+      'Festival decorations now show up automatically by real date — Halloween all of October, winter holidays in December, New Year\'s, Valentine\'s Day, and Oktoberfest, each with their own scattered decorations and color wash. Fully config-driven (see FESTIVALS in environment.js) — easy to add, remove, or adjust the date ranges for any of these later',
+      'The admin preview tool from part 4 now also covers season and festival — preview any of the four seasons or any festival (or "none") independent of the real date, same "this browser only, never affects real visitors" behavior as the weather/time preview'
+    ]
+  },
+  {
+    version: '01.13',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'BACKEND: posts, recs, and screams each moved from one shared Firestore document per collection to one document per item — fixes a real data race where two people voting/commenting/posting around the same time could silently overwrite each other',
+      'Voting and commenting on a post now use a proper read-modify-write transaction against that post\'s own document, so two people acting on the same post at once merge correctly instead of one erasing the other',
+      'Existing posts/recs/screams migrate automatically on first load — nothing existing is lost. Old data is left in place afterward as an untouched backup, not deleted',
+      'FIX: the town-square "screaming void" used to re-save its entire message list on every render, including renders triggered by its own incoming Firebase updates — a render→write→update→render loop. Rendering only reads now; expired screams are deleted individually instead of rewriting the whole list',
+      'FIX: re-entering Wonderland repeatedly no longer stacks up duplicate card-suit icons (spawnCardSoldiers wasn\'t clearing its container first, unlike the fireflies)',
+      'FIX: re-entering the Void (space/expressionist world) no longer leaves old animation loops, shooting-star timers, and click listeners running in the background — was causing rising CPU/battery use and a tap on a planet triggering the pop sound multiple times at once',
+      'No visible or behavioral change to any of the above from the site — this batch is backend/reliability work only'
+    ]
+  },
+  {
+    version: '01.12',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'FIX: "The Wireless" option in the ♪ sounds menu no longer forces navigation to the wireless page when selected — it now behaves exactly like Ancient/Lofi/Dark: tap to start/resume in place, tap again to stop, no matter what page you\'re on',
+      'The "jump to the grid or whatever\'s currently playing" smart shortcut is now exclusively the bottom-nav wireless button\'s (and the map pin\'s) behavior, not the sounds-menu option\'s'
+    ]
+  },
+  {
+    version: '01.11',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'The top-bar "podcast" badge is now a dedicated Midnight Archive shortcut — always that show, regardless of what\'s playing or which show is set as admin\'s "default"',
+      'The music modal\'s "The Wireless" option is now the general-purpose shortcut instead: resumes whatever was last loaded, or opens the main wireless page if nothing was',
+      'That same smart shortcut now also applies to the bottom-nav wireless button, the map\'s wireless pin, and any direct/bookmarked /wireless link: if you\'re already viewing a show\'s player it steps back to the grid; if something\'s playing elsewhere it deep-links straight to it; if nothing\'s playing it opens the grid',
+      'FIX: admin panel was silently showing the literal text "v${CURRENT_VERSION}" instead of the actual version number — that placeholder was sitting in raw HTML and never being evaluated. Now set properly via JS each time the panel opens'
+    ]
+  },
+  {
     version: '01.10',
     date: new Date().toLocaleDateString(),
     changes: [
@@ -315,6 +364,126 @@ function fbListenPresence(cb) {
   } catch(e) {}
 }
 
+// ═══ v01.13: GENERIC PER-ITEM COLLECTION HELPERS ═══
+// Same one-doc-per-item pattern already used above for stories/shows/
+// episodes/comments/chat/presence, generalized so posts/recs/screams
+// (below) can use it too, instead of the old single-blob-per-collection
+// storage. That old pattern (one Firestore doc holding an entire array
+// as a JSON string) had a real bug: every write re-uploaded the WHOLE
+// array, so two people acting around the same time (e.g. two votes on
+// the same post) could silently overwrite each other. Existing bespoke
+// helpers (fbSaveStory etc.) are left as-is — they already work and
+// don't have the race issue this fixes — this is only used for the new
+// posts/recs/screams code below.
+function fbSaveItem(collection, id, data) {
+  if (!db) return;
+  try { db.collection(collection).doc(id).set(data); } catch(e) {}
+}
+function fbDeleteItem(collection, id) {
+  if (!db) return;
+  try { db.collection(collection).doc(id).delete(); } catch(e) {}
+}
+function fbListenCollection(collection, cb) {
+  if (!db) return;
+  try {
+    db.collection(collection).onSnapshot(snap => {
+      const items=[];
+      snap.forEach(doc=>items.push(doc.data()));
+      cb(items);
+    });
+  } catch(e) {}
+}
+// Proper read-modify-write transaction against a single item's doc.
+// mutateFn receives the CURRENT server-side data for that item (not
+// whatever stale copy the caller had locally) and returns the updated
+// object to save. Used anywhere two people could plausibly act on the
+// same item at the same instant (voting/commenting on the same post) —
+// each transaction re-reads the latest state before applying its own
+// change, so simultaneous actions merge instead of one clobbering the
+// other.
+async function fbTransactItem(collection, id, mutateFn) {
+  if (!db) return null;
+  try {
+    return await db.runTransaction(async (tx) => {
+      const ref = db.collection(collection).doc(id);
+      const snap = await tx.get(ref);
+      const current = snap.exists ? snap.data() : null;
+      const updated = mutateFn(current);
+      if (updated) tx.set(ref, updated);
+      return updated;
+    });
+  } catch(e) { console.warn('transaction failed:', e.message); return null; }
+}
+
+// One-time migration: posts/recs/screams used to each live as a single
+// doc holding the whole collection as a JSON string (see above). This
+// moves any existing data into the new per-item collections the first
+// time it runs, and does nothing on every run after that (each check is
+// "does the new collection already have anything in it?"). Safe to call
+// on every page load, from every visitor's browser — whoever gets there
+// first does the migration, everyone else's check just finds it already
+// done. The old blob docs are left in place afterward as an untouched
+// backup, not deleted.
+async function ensureLegacyDataMigrated(){
+  if(!db)return;
+  try{
+    const postsSnap=await db.collection('nosirt_posts').limit(1).get();
+    if(postsSnap.empty){
+      const legacy=await db.collection('nosirt').doc('posts').get();
+      const items=legacy.exists?(JSON.parse(legacy.data().v||'[]')||[]):[];
+      if(items.length){
+        const batch=db.batch();
+        items.forEach(p=>{
+          // posts already had real ids (e.g. "p1737000000000") from
+          // creation — reuse them so this is naturally idempotent even
+          // if two browsers race to run the migration at once.
+          const id=p.id||('legacy-post-'+items.indexOf(p));
+          batch.set(db.collection('nosirt_posts').doc(id),Object.assign({},p,{id}));
+        });
+        await batch.commit();
+      }
+    }
+  }catch(e){console.warn('posts migration error:',e.message);}
+
+  try{
+    const recsSnap=await db.collection('nosirt_recs').limit(1).get();
+    if(recsSnap.empty){
+      const legacy=await db.collection('nosirt').doc('recs').get();
+      const items=legacy.exists?(JSON.parse(legacy.data().v||'null')||[]):[];
+      if(items.length){
+        const batch=db.batch();
+        // recs never had ids — use a deterministic index-based id so
+        // concurrent migrations converge on the same docs instead of
+        // duplicating. Original array was newest-first; fabricate a
+        // descending ts so the new sort-by-ts rendering preserves that
+        // same order.
+        const baseTs=Date.now();
+        items.forEach((r,i)=>{
+          const id='legacy-rec-'+i;
+          batch.set(db.collection('nosirt_recs').doc(id),Object.assign({},r,{id,ts:r.ts||(baseTs-i)}));
+        });
+        await batch.commit();
+      }
+    }
+  }catch(e){console.warn('recs migration error:',e.message);}
+
+  try{
+    const screamsSnap=await db.collection('nosirt_screams').limit(1).get();
+    if(screamsSnap.empty){
+      const legacy=await db.collection('nosirt').doc('screams').get();
+      const items=legacy.exists?(JSON.parse(legacy.data().v||'[]')||[]):[];
+      if(items.length){
+        const batch=db.batch();
+        items.forEach((s,i)=>{
+          const id='legacy-scream-'+i;
+          batch.set(db.collection('nosirt_screams').doc(id),Object.assign({},s,{id}));
+        });
+        await batch.commit();
+      }
+    }
+  }catch(e){console.warn('screams migration error:',e.message);}
+}
+
 // Uploads an image for "image upload" chat mode. Enforces type/size
 // client-side (server-side Firestore/Storage rules should mirror this —
 // see storage.rules). Returns {url, path} or null on failure.
@@ -583,8 +752,19 @@ const S={
   chatSettings:{mediaMode:'off'}, // 'off' | 'gif' | 'upload'
   chatMessages:[],
   chatLastSeenTs:Number(localStorage.getItem('n_chat_seen')||0),
-  // v01.09: who's online
+  // v01.14: who's online
   onlinePresence:[],
+  // v01.14: living-map environment (location/weather) — see environment.js.
+  // hemisphere defaults 'N' until a real location comes back, per the
+  // "fall back to north if we truly can't tell" decision.
+  environment:{
+    ready:false, lat:null, lon:null, hemisphere:'N',
+    weatherCode:0, cloudCover:0, precipitation:0, snowfall:0, windSpeed:0,
+    isDay:true, sunrise:null, sunset:null, tempC:null, fetchedAt:0
+  },
+  // v01.14 step 4: admin "preview weather/time" override — this browser
+  // only, never synced to Firebase. null = use real weather/time.
+  envPreview:null,
 };
 
 function filt(t){let s=t||'';BAD.forEach(w=>{s=s.replace(new RegExp(w,'gi'),'***')});return s;}

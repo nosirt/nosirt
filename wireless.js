@@ -599,16 +599,22 @@ function updateLiveBadge(){
   }
 }
 
+// v01.11: the top-bar "podcast" badge — ALWAYS Midnight Archive,
+// regardless of what's currently playing or which show admin has set
+// as "default". Uses gotoWirelessPageDirect() (map-layout.js) rather
+// than navigateTo('wireless'), since that path now runs the general
+// "smart" wireless shortcut (see openWirelessSmart) which would
+// second-guess the state we're about to set up here.
 function handleLiveBadgeClick(){
-  const defaultShow=getDefaultShow();
-  if(!defaultShow){navigateTo('wireless');return;}
-  if(S.currentShowId!==defaultShow.id){S.currentShowId=defaultShow.id;refreshCurrentShowEpisodes();}
+  const show=getMidnightArchiveShow()||getDefaultShow();
+  if(!show){navigateTo('wireless');return;}
+  if(S.currentShowId!==show.id){S.currentShowId=show.id;refreshCurrentShowEpisodes();}
   const ep=pickDefaultEpisode();
   if(!ep){navigateTo('wireless');return;} // no videos exist yet at all
   loadEpisode(ep);
   toast(ep.isLive?('🔴 tuning in live: '+ep.title):('▶ '+ep.title));
-  navigateTo('wireless');
-  if(typeof setActiveShow==='function')setActiveShow(defaultShow.id,{autoplay:false});
+  if(typeof gotoWirelessPageDirect==='function')gotoWirelessPageDirect();else navigateTo('wireless');
+  if(typeof setActiveShow==='function')setActiveShow(show.id,{autoplay:false});
 }
 
 // Safety-net + periodic re-check for whichever episode is currently
@@ -629,40 +635,11 @@ function sweepLiveStatus(){
   probeLiveStatus(liveEp,(isLive)=>{ markEpisodeLive(liveEp.id,isLive); });
 }
 
-// The top music-bar podcast button ALWAYS means the default show
-// (Midnight Archive) specifically — never whatever show the visitor
-// happens to be browsing.
-function startPodcastFromMusicBar(){
-  const defaultShow=getDefaultShow();
-  if(!defaultShow)return null;
-  if(S.currentShowId!==defaultShow.id){
-    S.currentShowId=defaultShow.id;
-    refreshCurrentShowEpisodes();
-  }
-  const liveEp=(S.episodes||[]).find(e=>e.isLive);
-  if(liveEp&&(!currentEpisode||currentEpisode.id!==liveEp.id)){
-    loadEpisode(liveEp);
-    return true; // handled — no page navigation needed
-  }
-  if(currentEpisode&&ytPlayer&&currentEpisode.showId===defaultShow.id){
-    ytPlayer.playVideo();
-    return true;
-  }
-  if(S.episodes&&S.episodes.length){
-    loadDefaultEpisode();
-    return false;
-  }
-  return null;
-}
-
-// Called by the top-bar podcast button when it needs to open the wireless
-// page fresh — always lands directly on the default show's player, never
-// the shows-browser home grid.
-function openDefaultShowFromMusicBar(){
-  const defaultShow=getDefaultShow();
-  navTo('wireless');
-  if(defaultShow)setActiveShow(defaultShow.id,{autoplay:false});
-}
+// v01.11: startPodcastFromMusicBar() / openDefaultShowFromMusicBar()
+// were removed here — both only existed to force "always Midnight
+// Archive" behavior, which now lives directly in handleLiveBadgeClick()
+// above. The general-purpose "Wireless" control (music modal) now goes
+// through openWirelessSmart() in map-layout.js instead.
 
 (function initWireless(){
   document.addEventListener('DOMContentLoaded',()=>{
@@ -1049,6 +1026,14 @@ async function deleteSlot(){
 
 function getDefaultShow(){
   return (S.shows||[]).find(s=>s.isDefault) || (S.shows||[])[0] || null;
+}
+// v01.11: the top-bar "podcast" badge is a dedicated Midnight Archive
+// shortcut — deliberately independent of whichever show admin has
+// marked "default" (that setting can be changed later; this can't).
+function getMidnightArchiveShow(){
+  return (S.shows||[]).find(s=>s.id==='midnight-archive')
+      || (S.shows||[]).find(s=>(s.title||'').trim().toLowerCase()==='midnight archive')
+      || null;
 }
 function currentShowIdSafe(){ return S.currentShowId||null; }
 

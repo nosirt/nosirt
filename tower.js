@@ -49,28 +49,54 @@ function openPost(id){
   $('post-detail').classList.add('open');
 }
 function closeDetail(){$('post-detail').classList.remove('open');$('comment-text').value='';S.currentPost=null;renderPosts();}
+
+// v01.13: pure mutation functions, shared between the instant local
+// (optimistic) update and the Firestore transaction below — so both
+// paths always compute the exact same result and can't drift apart.
+function applyVoteMutation(post,dir,userId){
+  const p=Object.assign({},post,{userVotes:Object.assign({},post.userVotes||{})});
+  const prev=p.userVotes[userId]||0;
+  if(prev===dir){p.userVotes[userId]=0;p.votes=(p.votes||0)-dir;}
+  else{p.votes=(p.votes||0)-prev+dir;p.userVotes[userId]=dir;}
+  return p;
+}
+function applyCommentMutation(post,commentObj){
+  return Object.assign({},post,{comments:(post.comments||[]).concat([commentObj])});
+}
+
 function vote(id,dir){
   const post=S.posts.find(p=>p.id===id);if(!post)return;
-  if(!post.userVotes)post.userVotes={};
-  const prev=(post.userVotes[S.userId])||0;
-  if(prev===dir){post.userVotes[S.userId]=0;post.votes=(post.votes||0)-dir;}
-  else{post.votes=(post.votes||0)-prev+dir;post.userVotes[S.userId]=dir;}
-  localStorage.setItem('n_posts',JSON.stringify(S.posts)); fbSave('posts',{v:JSON.stringify(S.posts)});openPost(id);
+  // Instant local feedback...
+  const updated=applyVoteMutation(post,dir,S.userId);
+  Object.assign(post,updated);
+  localStorage.setItem('n_posts',JSON.stringify(S.posts));
+  openPost(id);
+  // ...then the authoritative write: a transaction that re-reads the
+  // post's CURRENT server state and applies this same vote against
+  // THAT, so a second person voting at the same instant can't silently
+  // erase this one (the old code re-uploaded the entire posts array on
+  // every vote, so whichever write landed last simply won).
+  fbTransactItem('nosirt_posts',id,current=>current?applyVoteMutation(current,dir,S.userId):updated);
 }
 function addComment(){
   const t=$('comment-text').value.trim();if(!t||!S.currentPost)return;
   const post=S.posts.find(p=>p.id===S.currentPost);if(!post)return;
-  if(!post.comments)post.comments=[];
-  post.comments.push({text:filt(t),uid:S.userId.slice(-6),ts:Date.now()});
-  localStorage.setItem('n_posts',JSON.stringify(S.posts)); fbSave('posts',{v:JSON.stringify(S.posts)});
+  const commentObj={text:filt(t),uid:S.userId.slice(-6),ts:Date.now()};
+  const updated=applyCommentMutation(post,commentObj);
+  Object.assign(post,updated);
+  localStorage.setItem('n_posts',JSON.stringify(S.posts));
   $('comment-text').value='';openPost(S.currentPost);toast('replied ✓');
+  const postId=S.currentPost;
+  fbTransactItem('nosirt_posts',postId,current=>current?applyCommentMutation(current,commentObj):updated);
 }
 function openNewPost(){$('new-post-forum').textContent='n/'+S.currentForum;$('new-post-form').classList.add('open');}
 function closeNewPost(){$('new-post-form').classList.remove('open');$('post-title-input').value='';$('post-body-input').value='';}
 function submitPost(){
   const title=$('post-title-input').value.trim();if(!title)return;
-  S.posts.unshift({id:'p'+Date.now(),title:filt(title),body:filt($('post-body-input').value.trim()),
-    forum:S.currentForum,uid:S.userId.slice(-6),ts:Date.now(),votes:0,userVotes:{},comments:[]});
-  localStorage.setItem('n_posts',JSON.stringify(S.posts)); fbSave('posts',{v:JSON.stringify(S.posts)});
+  const post={id:'p'+Date.now(),title:filt(title),body:filt($('post-body-input').value.trim()),
+    forum:S.currentForum,uid:S.userId.slice(-6),ts:Date.now(),votes:0,userVotes:{},comments:[]};
+  S.posts.unshift(post);
+  localStorage.setItem('n_posts',JSON.stringify(S.posts));
+  fbSaveItem('nosirt_posts',post.id,post); // only the new post's own doc gets written
   closeNewPost();renderPosts();toast('posted ✓');
 }

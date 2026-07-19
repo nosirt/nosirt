@@ -113,9 +113,34 @@ function buildExp(){
   initSpace();
 }
 
+// v01.13: previously nothing here was ever cleaned up between visits to
+// the Void — every call to initSpace() started a brand new draw loop,
+// shooting-star interval, and click/touch listener on top of whatever
+// was still running from a previous visit (re-entering a few times
+// meant multiple loops running at once, and a tap firing the pop sound
+// multiple times). teardownSpace() is idempotent — safe to call even
+// when there's nothing to tear down yet — so calling it first here
+// means any number of visits only ever leaves one of each running.
+let spaceRafId=null;
+let spaceIntervalId=null;
+let spaceCanvasEl=null;
+let spaceClickHandler=null;
+let spaceTouchHandler=null;
+function teardownSpace(){
+  if(spaceRafId){cancelAnimationFrame(spaceRafId);spaceRafId=null;}
+  if(spaceIntervalId){clearInterval(spaceIntervalId);spaceIntervalId=null;}
+  if(spaceCanvasEl){
+    if(spaceClickHandler)spaceCanvasEl.removeEventListener('click',spaceClickHandler);
+    if(spaceTouchHandler)spaceCanvasEl.removeEventListener('touchstart',spaceTouchHandler);
+  }
+  spaceClickHandler=null;spaceTouchHandler=null;spaceCanvasEl=null;
+}
+
 function initSpace(){
+  teardownSpace();
   const cv=$('space-canvas');
   if(!cv)return;
+  spaceCanvasEl=cv;
   const W=cv.offsetWidth||window.innerWidth;
   const H=cv.offsetHeight||window.innerHeight;
   cv.width=W;cv.height=H;
@@ -155,7 +180,7 @@ function initSpace(){
     shoots.push({x:Math.random()*W,y:Math.random()*H*.3,
       vx:4+Math.random()*6,vy:2+Math.random()*3,life:1});
   }
-  setInterval(addShoot,3000+Math.random()*4000);
+  spaceIntervalId=setInterval(addShoot,3000+Math.random()*4000);
 
   // Nebula blobs (static, drawn once)
   const nebulas=[
@@ -263,12 +288,14 @@ function initSpace(){
       if(s.life<=0)shoots.splice(i,1);
     }
 
-    requestAnimationFrame(draw);
+    spaceRafId=requestAnimationFrame(draw);
   }
-  requestAnimationFrame(draw);
+  spaceRafId=requestAnimationFrame(draw);
 
-  // Touch planets
-  cv.addEventListener('click',e=>{
+  // Touch planets — handlers stored as named refs so teardownSpace()
+  // can remove exactly these listeners later (anonymous inline
+  // functions can't be removeEventListener'd).
+  spaceClickHandler=e=>{
     const rect=cv.getBoundingClientRect();
     const mx=e.clientX-rect.left,my=e.clientY-rect.top;
     planets.forEach(p=>{
@@ -277,8 +304,8 @@ function initSpace(){
         showSpacePop(e.clientX,e.clientY);
       }
     });
-  });
-  cv.addEventListener('touchstart',e=>{
+  };
+  spaceTouchHandler=e=>{
     const rect=cv.getBoundingClientRect();
     Array.from(e.touches).forEach(t=>{
       const mx=t.clientX-rect.left,my=t.clientY-rect.top;
@@ -289,7 +316,9 @@ function initSpace(){
         }
       });
     });
-  },{passive:true});
+  };
+  cv.addEventListener('click',spaceClickHandler);
+  cv.addEventListener('touchstart',spaceTouchHandler,{passive:true});
 }
 
 function playSpaceSound(){
@@ -342,6 +371,7 @@ function spawnFireflies(){
 function spawnCardSoldiers(){
   const container=$('wl-soldiers');
   if(!container)return;
+  container.innerHTML=''; // v01.13: was missing — re-entering Wonderland stacked up duplicate suit icons
   const suits=['♠','♥','♦','♣'];
   for(let i=0;i<4;i++){
     const s=document.createElement('div');
