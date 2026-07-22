@@ -8,6 +8,67 @@
 // ═══ VERSION HISTORY ═══
 const VERSION_HISTORY = [
   {
+    version: '01.20',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'Pixie dialogue: 400 → 601 lines — conversation habits (interrupting herself, changing her mind mid-sentence), emotional check-ins (bored/tired/hungry/failed/scared/lonely/confused/etc), goodnight/good morning, and a large fallback-recovery set that reacts to HOW a message was said (gibberish, one word, all-caps swearing, spam/repeats, emoji-only, very long messages, "whatever"/"what?"/"why?") instead of a flat "I don\'t understand"',
+      'NEW: she can now DO things instead of only talking about them — "play some lofi" actually starts it playing; "play the podcast"/"play midnight archive" actually loads and plays that episode in the background (with a button to jump to the wireless page if you want to watch); asking about a new episode gives a tappable link there',
+      'NEW: real weather Q&A — asking "what\'s the weather" or "how windy is it" now pulls your actual current temperature/conditions from the location system already built, instead of a canned "yeah weather\'s real" line. If location isn\'t available yet, she says so and nudges you to allow it',
+      'NEW: light response-combining — "hi, what\'s up, nice weather" now gets one combined reply (greeting + real weather) instead of only reacting to the first thing detected',
+      'Her messages can now include a small clickable action button (e.g. "🎙 take me there") alongside her text, reusable for future site-linking beyond just Midnight Archive'
+    ]
+  },
+  {
+    version: '01.19',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'Pixie dialogue: 144 → 400 lines, folding in a much richer character guide as her authoritative voice going forward — running gags (a suspicious goose, secretive squirrel meetings, a sighing Tower, an unexplained mushroom incident, an unexplained pond), favorite/hated things, and rare soft/existential moments',
+      'NEW mechanics to actually use all this: idle detection ("...you still there?" after 20s of silence, "did you fall asleep?" after 60s while her panel is open), a "haven\'t seen you in days" greeting variant, seasonal/weather-aware asides that read the site\'s real current weather and time of day, and a lightweight affection tier (low/medium/high, based on how much you\'ve talked to her) that unlocks warmer responses over time',
+      'Tapping her name in the panel header is now a small poke gag — a running joke on its own',
+      'Added regex triggers for how-are-you / what-are-you-doing / who-are-you / how-old-are-you / do-you-like-humans / do-you-like-me / tell-me-a-joke / plain-hello, on top of the existing rude/nice/flirting/curious-about-the-curse detection'
+    ]
+  },
+  {
+    version: '01.18',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'NEW: Pixie\'s shorts source — a show named exactly "pixie" (enforced unique, case-insensitive) is now reserved as her curated shorts feed. Fed the exact same way as any other show — paste a playlist link — no new import mechanism needed',
+      'That specific show is automatically hidden from the public wireless grid, visible only when admin is unlocked, so it can still be managed through the normal show-edit UI without regular visitors ever seeing it in the browse list',
+      'Admin panel\'s "pixie" tab now shows whether her shorts source exists yet, with a one-tap shortcut to create or manage it — no more digging through Wireless to find it'
+    ]
+  },
+  {
+    version: '01.17',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'NEW: Pixie can now ask for (or notice, if you just volunteer it) your name — give her one and it becomes your real display identity site-wide (global chat, tower posts/comments, who\'s-online) going forward, replacing "user(#####)"',
+      'Past messages/posts keep whatever label they were sent under — same "changes apply going forward only" rule as everywhere else on this site, nothing gets rewritten retroactively',
+      'Duplicate names are handled the fun way: the first person to claim a name gets it plain, the second gets auto-numbered (e.g. "Alex 2") — and the first person gets bumped to "Alex 1" live, with Pixie proactively mentioning it next time you open her, rather than silently renaming you',
+      'This needed Pixie to gain a small bit of real memory (S.pixieAwaiting) — she\'s otherwise fully stateless, but now tracks "waiting on a name reply" across one turn of conversation',
+      'Backend: a new live-synced name registry (nosirt_names) using the same transaction pattern from the earlier data-race fixes, so two people claiming the same name at once can\'t corrupt each other\'s state'
+    ]
+  },
+  {
+    version: '01.16',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'Admin panel reorganized into a proper tabbed settings panel (features / chat / world / pixie) instead of one long stacked column — the small profile sidebar now just has an "open admin settings" button once unlocked. A pixie tab is already in place for the settings coming in later batches',
+      'Pixie\'s dialogue moved out of the code entirely into pixie-lines.json — a separate data file specifically so the line count can keep growing (toward ~1000, in batches) without ever touching pixie.js again',
+      'Added a mood system underneath her responses — annoyed/sarcastic/bored/caught-off-guard/rare-sincere-crack — instead of one flat tone, plus special-intent detection (rude/nice/flirting/asking if she\'s real/asking about the curse/goodbye) on top of the existing topic tips',
+      'First batch of dialogue: ~125 lines across greetings, 10 topic categories, 7 special-intent categories, and fallbacks. More batches to follow — this is intentionally not the full set yet'
+    ]
+  },
+  {
+    version: '01.15',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'FIX: the environment-sound (rain/wind/thunder) button was accidentally living inside the map zoom controls, which have been intentionally hidden since v01.05/06 — it\'s now its own standalone button, always visible',
+      'Environment sound is no longer just on/off — tap the button for a volume slider (0-160%), raised well above the old fixed levels so it can sit in the background over music if you want it up',
+      'NEW: Pixie — a small companion who wanders the screen on her own (and occasionally flies off and comes back), can be dragged like the profile icon, and opens a chat panel when tapped',
+      'Pixie\'s responses are hardcoded for now (personality + tips about the site) — built so only one function (getPixieResponse) needs to change when she\'s wired up to a real AI later. Note for that future step: as a static site with no server, that\'ll need a Netlify Function to proxy the request, the same way the admin password check already does — an API key can\'t live safely in the client code the way the YouTube/GIPHY keys do'
+    ]
+  },
+  {
     version: '01.14',
     date: new Date().toLocaleDateString(),
     changes: [
@@ -580,6 +641,85 @@ function getChatNum(){
   return n;
 }
 
+// ═══ v01.17: DISPLAY IDENTITY — self-reported name (via Pixie), with
+// auto-numbering when two people claim the same one. Replaces
+// "user(#####)" for chat/posts/comments going forward once set — past
+// activity keeps whatever label was baked into it at the time, exactly
+// like the rest of this site's "changes apply going forward" pattern.
+function sanitizeDisplayName(raw){
+  let n=(raw||'').trim();
+  n=n.replace(/^(i'?m|i am|my name is|call me|name'?s|it'?s)\s+/i,'').trim();
+  n=n.replace(/[\r\n\t]+/g,' ').replace(/\s+/g,' ').trim();
+  if(n.length>24)n=n.slice(0,24).trim();
+  if(!/[a-zA-Z]/.test(n))return null; // needs at least one letter — keeps it distinct from raw numbers
+  n=filt(n); // same profanity filter used everywhere else on the site
+  return n||null;
+}
+function getDisplayLabel(){
+  if(S.identity && S.identity.name){
+    return S.identity.name + (S.identity.number!=null ? (' '+S.identity.number) : '');
+  }
+  return 'user('+getChatNum()+')';
+}
+
+let identityUnsub=null;
+// Watches this browser's claimed-name doc live, so if someone else
+// claims the same name later (causing this browser's number to change,
+// e.g. bare "Alex" \u2192 "Alex 1"), it catches the update without a
+// reload. Sets a pending flag Pixie checks for and mentions next time
+// her panel opens.
+function startIdentityLiveListener(key){
+  if(!db || !key)return;
+  if(identityUnsub){ try{identityUnsub();}catch(e){} identityUnsub=null; }
+  try{
+    identityUnsub = db.collection('nosirt_names').doc(key).onSnapshot(doc=>{
+      if(!doc.exists)return;
+      const data=doc.data();
+      const mine=(data.holders||[]).find(h=>h.userId===S.userId);
+      if(!mine)return;
+      const prevNumber=S.identity.number;
+      S.identity.number=mine.number;
+      localStorage.setItem('n_identity_number', mine.number==null?'':String(mine.number));
+      if(prevNumber==null && mine.number!=null){
+        localStorage.setItem('n_identity_renumber_pending','1');
+      }
+    });
+  }catch(e){}
+}
+
+// The actual claim, via a proper transaction so two people claiming the
+// same name at nearly the same instant can't corrupt each other's
+// state. First holder of a name gets it bare (no number). Anyone after
+// that gets the next number \u2014 and if they're specifically the SECOND
+// holder, the first holder retroactively gets bumped to "1" in the same
+// transaction (the "oh, someone else showed up" moment).
+async function claimDisplayName(rawName){
+  const name=sanitizeDisplayName(rawName);
+  if(!name)return {ok:false};
+  const key=name.toLowerCase();
+  const result=await fbTransactItem('nosirt_names', key, current=>{
+    if(!current) return {name, holders:[{userId:S.userId,name,number:null}], nextNumber:2};
+    const existing=(current.holders||[]).find(h=>h.userId===S.userId);
+    if(existing) return current; // already holds this name, nothing to change
+    const holders=(current.holders||[]).slice();
+    if(holders.length===1 && holders[0].number==null){
+      holders[0]=Object.assign({},holders[0],{number:1});
+    }
+    const myNumber=current.nextNumber||2;
+    holders.push({userId:S.userId,name,number:myNumber});
+    return {name, holders, nextNumber:myNumber+1};
+  });
+  if(!result)return {ok:false};
+  const mine=result.holders.find(h=>h.userId===S.userId);
+  if(!mine)return {ok:false};
+  S.identity={name:mine.name, number:mine.number, key};
+  localStorage.setItem('n_identity_name', mine.name);
+  localStorage.setItem('n_identity_number', mine.number==null?'':String(mine.number));
+  localStorage.setItem('n_identity_key', key);
+  startIdentityLiveListener(key);
+  return {ok:true, name:mine.name, number:mine.number, wasFirst: mine.number==null};
+}
+
 // Default seed content for nosirt's keep — shown until real entries are added/synced
 const DEFAULT_SEED_CHAPTERS=[
         {
@@ -764,6 +904,17 @@ const S={
   },
   // v01.14 step 4: admin "preview weather/time" override — this browser
   // only, never synced to Firebase. null = use real weather/time.
+  // v01.17: self-reported display identity (name + auto-number),
+  // replacing "user(#####)" for this browser once set. See core.js
+  // identity helpers below and pixie.js for how it gets set.
+  identity:{
+    name: localStorage.getItem('n_identity_name')||null,
+    number: localStorage.getItem('n_identity_number') ? Number(localStorage.getItem('n_identity_number')) : null,
+    key: localStorage.getItem('n_identity_key')||null
+  },
+  // Pixie's tiny bit of conversational memory — what she's currently
+  // waiting on a reply for (e.g. 'name'). Cleared after each use.
+  pixieAwaiting:null,
   envPreview:null,
 };
 

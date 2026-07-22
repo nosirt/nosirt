@@ -1138,11 +1138,29 @@ function showCoverStyle(show,eps){
   return {style:`background:linear-gradient(135deg, ${color}55, ${color}22);`,label:`<span class="wp-show-cover-title">${esc(show.title)}</span>`};
 }
 
+// v01.18: Pixie's reserved shorts source. Fed via the same "paste a
+// playlist link" flow as any other show (see importPlaylist above) —
+// admin just names the show "pixie" and imports into it like normal.
+function getPixieShow(){
+  return (S.shows||[]).find(s=>(s.title||'').trim().toLowerCase()==='pixie')||null;
+}
+function getPixieShowEpisodes(){
+  const show=getPixieShow();
+  if(!show)return [];
+  return (S.showEpisodesAll||[]).filter(e=>e.showId===show.id).sort((a,b)=>(a.order||0)-(b.order||0));
+}
+
 function renderShowGrid(){
   const grid=$('wp-show-grid'),empty=$('wp-show-grid-empty');
   if(!grid)return;
   const q=($('wp-home-search')?$('wp-home-search').value:'').trim().toLowerCase();
-  const shows=(S.shows||[]).filter(s=>!q||s.title.toLowerCase().includes(q)||(s.description||'').toLowerCase().includes(q));
+  // v01.18: the reserved "pixie" show (her shorts source) never shows
+  // up in the public grid — only visible here when admin is unlocked,
+  // so it can still be managed through the normal show-edit UI.
+  const shows=(S.shows||[]).filter(s=>{
+    if((s.title||'').trim().toLowerCase()==='pixie' && !S.adminUnlocked) return false;
+    return !q||s.title.toLowerCase().includes(q)||(s.description||'').toLowerCase().includes(q);
+  });
   if(!shows.length){
     grid.innerHTML='';
     empty.style.display='block';
@@ -1235,12 +1253,19 @@ function setCoverType(type){
 function saveShowForm(){
   const title=filt($('wp-show-title-input').value.trim());
   if(!title){toast('give the show a title');return;}
+  const isNew=!wpEditingShowId;
+  const id=wpEditingShowId||('show'+Date.now());
+  // v01.18: "pixie" is reserved — only one show can have that name.
+  // It's the curated source Pixie's shorts pull from (see getPixieShow
+  // below) and is deliberately kept out of the public grid.
+  if(title.trim().toLowerCase()==='pixie'){
+    const clash=(S.shows||[]).find(s=>s.id!==id&&(s.title||'').trim().toLowerCase()==='pixie');
+    if(clash){ toast('only one show can be named "pixie" — that\'s reserved for her shorts source'); return; }
+  }
   const description=filt($('wp-show-desc-input').value.trim());
   const coverUrl=$('wp-show-cover-url').value.trim();
   const colorHex=$('wp-show-cover-color').value;
   const makeDefault=$('wp-show-default-check').checked;
-  const isNew=!wpEditingShowId;
-  const id=wpEditingShowId||('show'+Date.now());
   const existing=(S.shows||[]).find(s=>s.id===id);
   const order=isNew?((S.shows||[]).length):(existing?existing.order:0);
   const data={id,title,description,coverType:wcalCoverType,coverUrl,colorHex,order,

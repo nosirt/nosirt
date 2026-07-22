@@ -23,13 +23,48 @@
 const ENV_CACHE_KEY='n_env_cache';
 const ENV_REFRESH_MS=20*60*1000; // 20 minutes — weather doesn't need refreshing more often than this
 
-function envMuted(){ return localStorage.getItem('n_env_muted')==='1'; }
-function setEnvMuted(muted){
-  localStorage.setItem('n_env_muted', muted?'1':'0');
-  const btn=document.getElementById('env-mute-btn');
-  if(btn)btn.textContent=muted?'🔇':'🔊';
+// v01.15: volume is now a real 0–160% multiplier (0 = silent/muted,
+// 100% = the new, louder default, up to 160% for "loud enough to sit
+// in the background over other stuff"), replacing the old plain on/off
+// mute. Persisted per-browser. Base per-weather-kind levels are defined
+// in startWeatherSound() below and were raised from their original
+// values as part of this change.
+function envVolumeMultiplier(){
+  const v=localStorage.getItem('n_env_volume');
+  return v===null ? 1 : Math.max(0,Math.min(1.6,parseFloat(v)));
 }
-function toggleEnvMuted(){ setEnvMuted(!envMuted()); toast(envMuted()?'environment sounds muted':'environment sounds on'); if(typeof syncWeatherSound==='function')syncWeatherSound(); }
+function envMuted(){ return envVolumeMultiplier()<=0.001; }
+function setEnvVolumeMultiplier(v){
+  v=Math.max(0,Math.min(1.6,parseFloat(v)||0));
+  localStorage.setItem('n_env_volume', String(v));
+  updateEnvSoundIcon();
+  applyEnvVolumeLive();
+  if(typeof syncWeatherSound==='function')syncWeatherSound();
+}
+function updateEnvSoundIcon(){
+  const btn=document.getElementById('env-sound-btn');
+  if(btn)btn.textContent=envMuted()?'🔇':'🔊';
+  const slider=document.getElementById('env-volume-slider');
+  if(slider)slider.value=Math.round(envVolumeMultiplier()*100);
+}
+function toggleEnvVolumePopover(){
+  const pop=document.getElementById('env-volume-popover');
+  if(!pop)return;
+  pop.classList.toggle('open');
+  if(pop.classList.contains('open'))updateEnvSoundIcon();
+}
+// Live-adjusts the currently-playing sound's volume without restarting
+// it, so dragging the slider is smooth instead of stopping and
+// relaunching the audio on every tick.
+function applyEnvVolumeLive(){
+  if(!weatherAudio)return;
+  try{
+    weatherAudio.master.gain.setTargetAtTime(
+      Math.max(0.0001, weatherAudio.baseTarget*envVolumeMultiplier()),
+      weatherAudio.ac.currentTime, .2
+    );
+  }catch(e){}
+}
 
 // Browser geolocation first (real permission prompt, most accurate).
 // Silent IP-based fallback if denied/unavailable/times out. Resolves
@@ -106,7 +141,7 @@ async function refreshEnvironment(){
 function startEnvironmentRefreshLoop(){
   refreshEnvironment();
   setInterval(refreshEnvironment, ENV_REFRESH_MS);
-  setEnvMuted(envMuted()); // sync the mute button's icon to the saved preference on load
+  updateEnvSoundIcon(); // sync the sound button/slider to the saved preference on load
 }
 
 // ═══ v01.14 step 3: WEATHER AMBIENT SOUND ═══
@@ -146,7 +181,11 @@ function startWeatherSound(kind,windy){
     const ac=new AC();
     tryResumeAudioContext(ac);
     const master=ac.createGain();master.gain.value=.0001;master.connect(ac.destination);
-    const targetVol=(kind==='thunder')?.16:(kind==='rain')?.13:(kind==='snow')?.05:(windy?.09:.06);
+    // v01.15: raised from the original (max .16) so it's actually
+    // loud enough to sit in the background over music if wanted — the
+    // volume slider (0-160%) multiplies on top of these.
+    const baseTarget=(kind==='thunder')?.30:(kind==='rain')?.26:(kind==='snow')?.11:(windy?.20:.13);
+    const targetVol=Math.max(0.0001, baseTarget*envVolumeMultiplier());
     master.gain.exponentialRampToValueAtTime(targetVol,ac.currentTime+2);
     const nodes=[];
     const noise=makeNoiseLoopNode(ac);
@@ -167,7 +206,7 @@ function startWeatherSound(kind,windy){
       lfo.connect(lfoGain);lfoGain.connect(windFilt.frequency);lfo.start();
       nodes.push(windNoise,windFilt,windGain,lfo,lfoGain);
     }
-    weatherAudio={ac,master,nodes};
+    weatherAudio={ac,master,nodes,baseTarget};
   }catch(e){}
 }
 // One-shot rumble, layered on top of whatever ambient loop is already
@@ -185,7 +224,8 @@ function playThunderRumble(){
     const src=ac.createBufferSource();src.buffer=buf;
     const filt=ac.createBiquadFilter();filt.type='lowpass';filt.frequency.value=180;filt.Q.value=.7;
     const g=ac.createGain();g.gain.setValueAtTime(0,ac.currentTime);
-    g.gain.linearRampToValueAtTime(.4,ac.currentTime+.15);
+    const peak=Math.max(0.0001,.4*envVolumeMultiplier());
+    g.gain.linearRampToValueAtTime(peak,ac.currentTime+.15);
     g.gain.linearRampToValueAtTime(0,ac.currentTime+dur);
     src.connect(filt);filt.connect(g);g.connect(ac.destination);
     src.start();src.stop(ac.currentTime+dur);

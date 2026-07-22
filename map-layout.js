@@ -72,6 +72,12 @@ function enterSite(skipAnim){
     // (see environment.js). Fire-and-forget, same pattern as the other
     // init calls here — nothing else depends on it being ready yet.
     if(typeof startEnvironmentRefreshLoop==='function')startEnvironmentRefreshLoop();
+    // v01.15: Pixie
+    if(typeof initPixie==='function')initPixie();
+    // v01.17: resume watching for renumbering if a name was already claimed before
+    if(S.identity && S.identity.key && typeof startIdentityLiveListener==='function'){
+      startIdentityLiveListener(S.identity.key);
+    }
     // v01.07: which worlds/banner are switched on — live-synced so an
     // admin toggle takes effect for everyone immediately.
     fbListen('features', d=>{
@@ -1690,6 +1696,31 @@ function closeProfilePanel() {
   if (panel) panel.style.display = 'none';
 }
 
+// v01.16: full tabbed admin settings panel — launched from the small
+// profile sidebar once unlocked. Re-renders every section's content on
+// open, same as before, just now inside tabs instead of one long stack.
+function openAdminSettingsPanel(){
+  if(!S.adminUnlocked)return;
+  const panel=$('admin-settings-panel');
+  if(!panel)return;
+  panel.classList.add('open');
+  if(typeof renderFeatureToggleList==='function')renderFeatureToggleList();
+  if(typeof renderChatAdminSettings==='function')renderChatAdminSettings();
+  if(typeof renderEnvPreviewControls==='function')renderEnvPreviewControls();
+  if(typeof renderPixieAdminSettings==='function')renderPixieAdminSettings();
+}
+function closeAdminSettingsPanel(){
+  const panel=$('admin-settings-panel');
+  if(panel)panel.classList.remove('open');
+}
+function switchAdminTab(tab){
+  ['features','chat','environment','pixie'].forEach(t=>{
+    const body=$('admin-tab-'+t),btn=$('admin-tabbtn-'+t);
+    if(body)body.style.display=(t===tab)?'flex':'none';
+    if(btn)btn.classList.toggle('active',t===tab);
+  });
+}
+
 async function loadProfileData() {
   // Load bio from Firebase
   const bio = await fetchSiteBio();
@@ -1802,6 +1833,7 @@ function handleAdminLogoutProfile() {
   if(typeof renderCalendarGrid==='function')renderCalendarGrid();
   if(typeof closeAdminEdit==='function')closeAdminEdit();
   if($('wcal-admin-panel'))$('wcal-admin-panel').classList.remove('show');
+  if(typeof closeAdminSettingsPanel==='function')closeAdminSettingsPanel();
   if(typeof renderShowGrid==='function')renderShowGrid();
   if(typeof renderComments==='function')renderComments();
   if(typeof cancelShowDescriptionEdit==='function')cancelShowDescriptionEdit();

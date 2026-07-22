@@ -52,7 +52,7 @@ function onPresenceUpdate(items){
 // enterSite() in map-layout.js.
 function startPresenceHeartbeat(){
   const beat = ()=>{
-    fbSavePresence(S.userId, { id:S.userId, num:getChatNum(), ts:Date.now() });
+    fbSavePresence(S.userId, { id:S.userId, num:getChatNum(), displayName:getDisplayLabel(), ts:Date.now() });
     // Occasional lazy prune of very stale presence docs (any client can
     // do this safely — deletes are idempotent).
     (S.onlinePresence||[]).forEach(p=>{
@@ -102,7 +102,8 @@ function renderOnlineList(){
     return;
   }
   el.innerHTML = users.map(u=>{
-    return `<div class="online-user-row">🟢 user(${esc(u.num)})${u.num===myNum?' <span class="online-you">(you)</span>':''}</div>`;
+    const label = u.displayName || ('user('+u.num+')');
+    return `<div class="online-user-row">🟢 ${esc(label)}${u.num===myNum?' <span class="online-you">(you)</span>':''}</div>`;
   }).join('');
 }
 
@@ -170,9 +171,10 @@ function renderChatMessages(){
     if(m.gifUrl) media = `<img class="chat-media" src="${esc(m.gifUrl)}" loading="lazy" alt="gif">`;
     else if(m.imageUrl) media = `<img class="chat-media" src="${esc(m.imageUrl)}" loading="lazy" alt="image">`;
     const textPart = m.text ? `<span class="chat-text">${esc(m.text)}</span>` : '';
+    const label = m.displayName || ('user('+m.num+')');
     return `<div class="chat-msg${mine?' mine':''}">
       <div class="chat-msg-head">
-        <span class="chat-user">user(${esc(m.num)})</span>${delBtn}
+        <span class="chat-user">${esc(label)}</span>${delBtn}
       </div>
       ${textPart}
       ${media}
@@ -216,7 +218,7 @@ function sendChatMessage(){
   if(text.length > CHAT_MAX_LEN) text = text.slice(0, CHAT_MAX_LEN);
   chatLastSentAt = now;
   const id = 'c'+now+Math.random().toString(36).slice(2,8);
-  fbSaveChatMsg(id, { id, num:getChatNum(), text:filt(text), gifUrl:null, imageUrl:null, imagePath:null, ts:now });
+  fbSaveChatMsg(id, { id, num:getChatNum(), displayName:getDisplayLabel(), text:filt(text), gifUrl:null, imageUrl:null, imagePath:null, ts:now });
   input.value = '';
 }
 
@@ -227,13 +229,13 @@ async function sendChatImage(file){
   if(!res) return;
   const now = Date.now();
   const id = 'c'+now+Math.random().toString(36).slice(2,8);
-  fbSaveChatMsg(id, { id, num:getChatNum(), text:'', gifUrl:null, imageUrl:res.url, imagePath:res.path, ts:now });
+  fbSaveChatMsg(id, { id, num:getChatNum(), displayName:getDisplayLabel(), text:'', gifUrl:null, imageUrl:res.url, imagePath:res.path, ts:now });
 }
 
 function sendChatGif(gifUrl){
   const now = Date.now();
   const id = 'c'+now+Math.random().toString(36).slice(2,8);
-  fbSaveChatMsg(id, { id, num:getChatNum(), text:'', gifUrl, imageUrl:null, imagePath:null, ts:now });
+  fbSaveChatMsg(id, { id, num:getChatNum(), displayName:getDisplayLabel(), text:'', gifUrl, imageUrl:null, imagePath:null, ts:now });
   closeGifSearch();
 }
 function sendChatGifByIndex(i){

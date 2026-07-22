@@ -63,7 +63,6 @@
       <button class="map-tool" onclick="zoomAt(1.18,innerWidth/2,innerHeight/2)" title="zoom in" aria-label="zoom in">+</button>
       <button class="map-tool" onclick="zoomAt(0.84,innerWidth/2,innerHeight/2)" title="zoom out" aria-label="zoom out">-</button>
       <button id="map-reset" class="map-tool" onclick="resetMap()" title="center map" aria-label="center map">⊕</button>
-      <button id="env-mute-btn" class="map-tool" onclick="toggleEnvMuted()" title="mute environment sounds (rain, wind, thunder)" aria-label="mute environment sounds">🔊</button>
     </div>
   </div>
 </div>
@@ -539,24 +538,91 @@
         <div id="admin-login-error-profile" style="font-size:.65rem;color:#c85a5a;font-family:'IM Fell English',serif;font-style:italic"></div>
       </div>
       <div id="admin-unlocked-view-profile" style="display:none;text-align:center">
-        <div style="font-size:.75rem;color:var(--amber);margin-bottom:8px;font-family:'Cinzel Decorative',serif">🔓 admin unlocked</div>
-        <!-- v01.07: feature toggles -->
-        <div style="text-align:left;border-top:1px solid rgba(200,137,42,.15);margin-top:4px;padding-top:10px;margin-bottom:10px">
-          <div style="font-size:.7rem;color:var(--fog);opacity:.6;margin-bottom:8px;font-family:'Cinzel Decorative',serif">features</div>
-          <div id="feature-toggle-list" style="display:flex;flex-direction:column;gap:7px"></div>
-        </div>
-        <!-- v01.08: global chat media settings -->
-        <div id="chat-admin-settings" style="text-align:left;border-top:1px solid rgba(200,137,42,.15);margin-top:4px;padding-top:10px;margin-bottom:10px"></div>
-        <!-- v01.14 step 4: weather/time preview -->
-        <div id="env-preview-controls" style="text-align:left;border-top:1px solid rgba(200,137,42,.15);margin-top:4px;padding-top:10px;margin-bottom:10px"></div>
+        <div style="font-size:.75rem;color:var(--amber);margin-bottom:10px;font-family:'Cinzel Decorative',serif">🔓 admin unlocked</div>
+        <button class="sq-submit" onclick="openAdminSettingsPanel()" style="width:100%;font-size:.75rem;margin-bottom:8px">⚙ open admin settings</button>
         <button class="sq-submit" onclick="handleAdminLogoutProfile()" style="width:100%;font-size:.75rem">lock</button>
       </div>
     </div>
   </div>
 </div>
 
+<!-- v01.16: full admin settings panel — tabbed, replaces the old
+     single stacked column of controls that used to live inside the
+     small profile sidebar. Launched via "open admin settings" above. -->
+<div id="admin-settings-panel">
+  <div class="admin-panel-inner">
+    <div class="admin-tabs">
+      <button id="admin-tabbtn-features" class="admin-tab-btn active" onclick="switchAdminTab('features')">features</button>
+      <button id="admin-tabbtn-chat" class="admin-tab-btn" onclick="switchAdminTab('chat')">chat</button>
+      <button id="admin-tabbtn-environment" class="admin-tab-btn" onclick="switchAdminTab('environment')">world</button>
+      <button id="admin-tabbtn-pixie" class="admin-tab-btn" onclick="switchAdminTab('pixie')">pixie</button>
+      <button class="admin-panel-close" onclick="closeAdminSettingsPanel()">✕</button>
+    </div>
+
+    <div id="admin-tab-features" class="admin-tab-body" style="display:flex">
+      <div style="font-size:.7rem;color:var(--fog);opacity:.6;margin-bottom:10px;font-family:'Cinzel Decorative',serif">turn a world (or the welcome banner) off temporarily</div>
+      <div id="feature-toggle-list" style="display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+
+    <div id="admin-tab-chat" class="admin-tab-body" style="display:none">
+      <div id="chat-admin-settings"></div>
+    </div>
+
+    <div id="admin-tab-environment" class="admin-tab-body" style="display:none">
+      <div id="env-preview-controls"></div>
+    </div>
+
+    <div id="admin-tab-pixie" class="admin-tab-body" style="display:none">
+      <div id="pixie-admin-settings">
+        <div class="admin-placeholder">Pixie's settings (shorts source, dialogue tuning, etc.) will show up here as they're built out.</div>
+      </div>
+    </div>
+
+    <div class="admin-panel-footer">
+      <button class="sq-submit" onclick="handleAdminLogoutProfile()" style="width:100%;font-size:.75rem">lock admin</button>
+    </div>
+  </div>
+</div>
+
 <div id="float-chat" onclick="openChatPanel()">
   💬<span id="chat-unread-badge" class="chat-unread-badge" style="display:none">0</span>
+</div>
+
+<!-- v01.15: Pixie — wanders the screen on her own, draggable, tap opens
+     her panel. Hardcoded responses for now (see pixie.js) — built so
+     only getPixieResponse() needs to change when real AI is wired up. -->
+<div id="pixie-icon" title="Pixie">🧚</div>
+
+<div id="pixie-panel">
+  <div class="pixie-panel-inner">
+    <div class="pixie-panel-head">
+      <span onclick="pokePixie()" style="cursor:pointer" title="poke">🧚 Pixie</span>
+      <button class="chat-panel-close" onclick="closePixiePanel()">✕</button>
+    </div>
+    <div id="pixie-messages" class="pixie-messages"></div>
+    <div class="chat-input-bar">
+      <input id="pixie-input" class="chat-text-input" type="text" placeholder="say something…" maxlength="300" onkeydown="handlePixieInputKeydown(event)">
+      <button class="chat-send-btn" onclick="sendPixieMessage()">➤</button>
+    </div>
+  </div>
+</div>
+
+<!-- v01.15: environment sound (rain/wind/thunder) — standalone control,
+     deliberately NOT inside #map-tools (that whole container is force-
+     hidden — see styles.css — after zoom/recenter buttons were removed
+     since pinch/scroll zoom already covers that). This button stayed
+     accidentally hidden inside it before; it's independent now. -->
+<div id="env-sound-btn" onclick="toggleEnvVolumePopover()" title="environment sound (rain, wind, thunder)">🔊</div>
+<div id="env-volume-popover">
+  <div class="env-volume-head">
+    <span>environment sound</span>
+    <button class="chat-panel-close" onclick="toggleEnvVolumePopover()">✕</button>
+  </div>
+  <div class="env-volume-sub">rain / wind / thunder — plays independently of music, in the background</div>
+  <input id="env-volume-slider" type="range" min="0" max="160" value="100" oninput="setEnvVolumeMultiplier(this.value/100)">
+  <div style="display:flex;justify-content:space-between;font-size:.62rem;color:var(--fog);opacity:.5">
+    <span>silent</span><span>louder</span>
+  </div>
 </div>
 
 <!-- v01.08: chat panel — Global Chat / Personal Chat / Carved in Stone -->
@@ -840,6 +906,7 @@
 <script src="wireless.js"></script>
 <script src="chat.js"></script>
 <script src="environment.js"></script>
+<script src="pixie.js"></script>
 
 </body>
 </html>
