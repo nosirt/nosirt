@@ -288,6 +288,13 @@ function getPixieResponse(userText){
   if(tier==='high' && roll<0.28 && data.flavor && data.flavor.secretAffection){
     return pickRandom(data.flavor.secretAffection);
   }
+  // v01.20/21: the fragment combiner (Pack #4) is the main driver of
+  // generic replies now — far more combinatorial variety than any
+  // fixed pool, since it's built from independent fragment pieces.
+  if(roll<0.75){
+    const reaction=buildUniversalReaction(data);
+    if(reaction)return reaction;
+  }
 
   const finalPool=[].concat(
     data.fallback&&pickLineFromCategory(data.fallback)?[pickLineFromCategory(data.fallback)]:[],
@@ -304,14 +311,26 @@ function openPixiePanel(){
   panel.classList.add('open');
   const log=$('pixie-messages');
   log.innerHTML='';
+  // v01.21: resume the conversation instead of wiping it every time —
+  // as long as this browser's localStorage hasn't been cleared.
+  const history=loadPixieHistory();
+  const hasHistory=history.length>0;
+  if(hasHistory){
+    history.forEach(h=>renderPixieHistoryLine(h.who,h.text));
+    log.scrollTop=log.scrollHeight;
+  }
   loadPixieLines().then(data=>{
-    // v01.19: if it's been a while since her panel was last opened,
-    // that greeting takes priority over the normal random pool.
-    const isReturning=checkReturnAfterDays();
-    if(isReturning && data.returnAfterDays && data.returnAfterDays.length){
-      addPixieMessage('pixie',pickRandom(data.returnAfterDays));
+    if(!hasHistory){
+      // v01.19: if it's been a while since her panel was last opened,
+      // that greeting takes priority over the normal random pool.
+      const isReturning=checkReturnAfterDays();
+      if(isReturning && data.returnAfterDays && data.returnAfterDays.length){
+        addPixieMessage('pixie',pickRandom(data.returnAfterDays));
+      }else{
+        addPixieMessage('pixie',pickLineFromCategory(data.greetings)||"...Hi. What do you want?");
+      }
     }else{
-      addPixieMessage('pixie',pickLineFromCategory(data.greetings)||"...Hi. What do you want?");
+      checkReturnAfterDays(); // still updates the last-visit clock; the resumed history already gives continuity
     }
     // A beat later, either mention a renumbering that happened since
     // last time, or (if she still doesn't know a name) ask for one.
@@ -361,6 +380,7 @@ function addPixieMessage(who,text,action){
   }
   log.appendChild(div);
   log.scrollTop=log.scrollHeight;
+  savePixieHistoryEntry(who,text);
 }
 function handlePixieInputKeydown(e){ if(e.key==='Enter')sendPixieMessage(); }
 
@@ -419,11 +439,124 @@ function maybeAskForName(){
   return false;
 }
 // Catches someone volunteering a name without being asked — "i'm Alex",
-// "my name is Alex", "call me Alex", etc. Returns the captured chunk or
-// null.
+// "my name is Alex", "call me Alex", etc. Requires an explicit marker
+// phrase on purpose (per the "be careful, not clever" note) — this is
+// NOT used for the "she just asked, this is the reply" case below,
+// which has its own, looser check.
 function detectUnpromptedName(text){
   const m=/\b(i'?m|i am|my name is|call me|name'?s)\s+([a-zA-Z][a-zA-Z0-9 _-]{0,23})\b/i.exec(text);
   return m?m[2]:null;
+}
+// v01.21 FIX: previously, once she asked for a name, the ENTIRE next
+// message got treated as the answer no matter what it was — so asking
+// her "what's your name?" back got swallowed as an attempted name
+// claim. Now a reply only counts as a name if it either uses an
+// explicit marker phrase, OR is short and plain (no question mark, no
+// sentence structure) — a bare "Dash" or "Sarah" passes; "what's your
+// name" (a question) does not.
+function looksLikeNameReply(text){
+  const t=(text||'').trim();
+  if(!t || t.includes('?'))return false;
+  if(/^(i'?m|i am|my name is|call me|name'?s)\s+/i.test(t))return true;
+  const words=t.split(/\s+/);
+  return words.length<=2 && /^[a-zA-Z' -]+$/.test(t) && t.length<=24;
+}
+
+// ═══ v01.21: CHAT HISTORY (persisted in this browser) ═══
+const PIXIE_HISTORY_KEY='n_pixie_chat_history';
+const PIXIE_HISTORY_MAX=200;
+function loadPixieHistory(){
+  try{ return JSON.parse(localStorage.getItem(PIXIE_HISTORY_KEY)||'[]'); }catch(e){ return []; }
+}
+function savePixieHistoryEntry(who,text){
+  try{
+    const hist=loadPixieHistory();
+    hist.push({who,text});
+    while(hist.length>PIXIE_HISTORY_MAX)hist.shift();
+    localStorage.setItem(PIXIE_HISTORY_KEY,JSON.stringify(hist));
+  }catch(e){}
+}
+// Renders a past message without re-saving it (used only to replay
+// history on open — saving here would just grow the log every visit).
+function renderPixieHistoryLine(who,text){
+  const log=$('pixie-messages');
+  if(!log)return;
+  const div=document.createElement('div');
+  div.className='pixie-msg '+(who==='user'?'user':'pixie');
+  const textEl=document.createElement('div');
+  textEl.textContent=text;
+  div.appendChild(textEl);
+  log.appendChild(div);
+}
+
+// ═══ v01.21: CONVERSATION TREE ENGINE ═══
+// Generic walker for the multi-turn trees in pixie-lines.json (trees).
+// A tree has: trigger (regex string), open (lines shown immediately),
+// branches (array of {match, reply, branches?}) matched against the
+// NEXT user message, and an optional fallback if nothing matches.
+// State lives in S.pixieAwaiting as {type:'tree', branches, fallback}
+// while a tree is mid-conversation; cleared once a leaf is reached.
+function findPixieTree(text){
+  const data=PIXIE_LINES;
+  if(!data || !data.trees)return null;
+  const t=text.toLowerCase();
+  for(const id in data.trees){
+    const tree=data.trees[id];
+    if(tree.trigger && new RegExp(tree.trigger,'i').test(t))return tree;
+  }
+  return null;
+}
+function pickFriendshipWhatAreWeLine(){
+  const tier=getPixieAffectionTier();
+  if(tier==='low')return "...Potentially.";
+  if(tier==='medium')return "...I think we're getting there.";
+  return "...Yeah. I think so. Don't make me say it twice.";
+}
+function resolvePixieTreeTokens(lines){
+  return (lines||[]).map(l=> l==='__FRIENDSHIP_TIER__' ? pickFriendshipWhatAreWeLine() : l);
+}
+// Returns an array of lines to show, or null if nothing in the current
+// tree state matched (caller falls through to the generic engine).
+function advancePixieTree(text){
+  const awaiting=S.pixieAwaiting;
+  if(!awaiting || awaiting.type!=='tree')return null;
+  const t=text.toLowerCase();
+  const branches=awaiting.branches||[];
+  for(const b of branches){
+    if(b.match && new RegExp(b.match,'i').test(t)){
+      const lines=resolvePixieTreeTokens(b.reply);
+      if(b.branches && b.branches.length){
+        S.pixieAwaiting={type:'tree', branches:b.branches, fallback:b.fallback||awaiting.fallback};
+      }else{
+        S.pixieAwaiting=null;
+      }
+      return lines;
+    }
+  }
+  S.pixieAwaiting=null;
+  return awaiting.fallback?resolvePixieTreeTokens(awaiting.fallback):null;
+}
+
+// ═══ v01.20/21: fragment combiner (Pack #4) — assembles a reply from
+// 1-2 independent fragment pools instead of one fixed line, so the
+// same "categories" produce a much larger number of effectively-
+// unique replies without needing more raw lines. ═══
+function buildUniversalReaction(data){
+  const u=data.universal;
+  if(!u)return null;
+  const baseCats=['general','agreement','disagreement','mildSarcasm','surprise','thoughtful','mildConfusion'];
+  const validBase=baseCats.filter(c=>u[c]&&u[c].length);
+  if(!validBase.length)return null;
+  const base=pickRandom(validBase);
+  let line=pickRandom(u[base]);
+  if(Math.random()<0.4){
+    const tailCats=['curiosityPrompt','filler','endingThought','tinyCompliment','playfulTeasing','encouraging'];
+    const validTail=tailCats.filter(c=>u[c]&&u[c].length && c!==base);
+    if(validTail.length){
+      line+=' '+pickRandom(u[pickRandom(validTail)]);
+    }
+  }
+  return line;
 }
 
 async function sendPixieMessage(){
@@ -437,13 +570,19 @@ async function sendPixieMessage(){
   resetPixieIdleTimers();
   const data=await loadPixieLines();
 
+  // ── Name capture ──
   const wasAwaitingName=S.pixieAwaiting==='name';
   const unprompted=detectUnpromptedName(text);
-  if(wasAwaitingName || unprompted){
+  const nameReplyLooksValid = wasAwaitingName ? looksLikeNameReply(text) : true;
+  if((wasAwaitingName && nameReplyLooksValid) || unprompted){
     S.pixieAwaiting=null;
-    const raw=wasAwaitingName?text:unprompted;
+    const raw=(wasAwaitingName&&nameReplyLooksValid)?text:unprompted;
     setTimeout(async ()=>{
       const res=await claimDisplayName(raw);
+      if(res.locked){
+        addPixieMessage('pixie',pickLineFromCategory(data.special&&data.special.nameLocked)||"You already used your one change. Clear your browser data if you really want a new name.");
+        return;
+      }
       if(!res.ok){
         addPixieMessage('pixie',"That's not really a name I can work with. Try again?");
         return;
@@ -454,6 +593,20 @@ async function sendPixieMessage(){
     },350+Math.random()*400);
     return;
   }
+  if(wasAwaitingName && !nameReplyLooksValid){
+    // v01.21: didn't look like a real name reply — drop it and respond
+    // to what they actually said instead of forcing a bad claim.
+    S.pixieAwaiting=null;
+  }
+
+  // ── Continue an in-progress conversation tree, if any ──
+  if(S.pixieAwaiting && S.pixieAwaiting.type==='tree'){
+    const lines=advancePixieTree(text);
+    if(lines && lines.length){
+      setTimeout(()=>{ lines.forEach(l=>addPixieMessage('pixie',l)); },350+Math.random()*400);
+      return;
+    }
+  }
 
   // v01.20: direct actions — playing/linking site content, and real
   // weather Q&A (with actual numbers), checked before the generic
@@ -462,7 +615,10 @@ async function sendPixieMessage(){
   const wantsLofi=/\bplay\s+(some\s+)?(lofi|lo-fi|ambient|music|something (soothing|chill|calm))\b/.test(t);
   const wantsPodcast=/\bplay\s+(the\s+)?(podcast|midnight archive|newest episode|latest episode|an episode)\b/.test(t);
   const asksNewEpisode=!wantsPodcast && /\b(new episode|newest episode|latest episode|is there a new)\b/.test(t);
-  const wantsWeather=/\b(what'?s the weather|how (windy|hot|cold|warm) is it|what'?s the temperature|is it raining|is it snowing|weather report)\b/.test(t);
+  // v01.21 FIX: broadened significantly — "how's the weather", "what's
+  // it like outside", "temp", etc previously fell through to the old
+  // canned (non-real-data) topic reply because this regex was too narrow.
+  const wantsWeather=/\b(what'?s|how'?s|hows) (the )?weather\b|weather (like|report|today|right now)|what'?s it like (outside|out there)|\bhow (windy|hot|cold|warm)\b|\btemp(erature)?\b.*\?|is it (raining|snowing|storming)\b/.test(t);
   const isGreetingish=/\b(hi|hello|hey|sup|yo)\b/.test(t)||/what'?s up|whats up/.test(t);
 
   if(wantsLofi){
@@ -505,8 +661,21 @@ async function sendPixieMessage(){
     return;
   }
 
+  // ── Start a new conversation tree, if this message triggers one ──
+  const tree=findPixieTree(text);
+  if(tree){
+    setTimeout(()=>{
+      (tree.open||[]).forEach(l=>addPixieMessage('pixie',l));
+      if(tree.branches && tree.branches.length){
+        S.pixieAwaiting={type:'tree', branches:tree.branches, fallback:tree.fallback};
+      }
+    },350+Math.random()*400);
+    return;
+  }
+
   setTimeout(()=>{ addPixieMessage('pixie',getPixieResponse(text)); },350+Math.random()*400);
 }
+
 
 // ═══ v01.18: ADMIN — shorts source status/shortcut ═══
 function renderPixieAdminSettings(){

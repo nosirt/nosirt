@@ -8,6 +8,18 @@
 // ═══ VERSION HISTORY ═══
 const VERSION_HISTORY = [
   {
+    version: '01.21',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'Pixie dialogue: 601 → 876 lines, plus 44 real multi-turn conversation trees (e.g. "I had a bad day" → she asks angry-or-tired → follow-up branches on your actual answer) walked by a new generic tree engine — fully data-driven, so more trees can be added later without touching code',
+      'NEW: a fragment-combiner for generic conversational reactions — instead of picking one fixed line, she assembles a reply from independent opener + follow-up pieces, which produces far more effectively-unique replies than the raw line count alone',
+      'FIX: weather questions were falling through to old canned lines for a lot of real phrasings ("how\'s the weather", "what\'s it like outside") because the detection was too narrow — broadened significantly so real weather data actually comes back',
+      'FIX: once she asked for a name, literally anything typed next got treated as the answer — including questions like "what\'s your name" back at her. A reply now has to actually look like a name (no question marks, short and plain, or an explicit "my name is"/"call me" phrase) before it\'s accepted',
+      'NEW: her conversation history now persists in this browser (up to the last 200 messages) — reopening her panel resumes where you left off instead of wiping it every time. Greetings/name-asks only fire on a genuinely first-ever open',
+      'NEW: name changes are capped at one — your first claim is free, one deliberate change after that is allowed, and a third attempt gets turned down (she\'ll say to clear your browser data if you really want to reset). Getting auto-renumbered because someone else claimed your name doesn\'t count against this'
+    ]
+  },
+  {
     version: '01.20',
     date: new Date().toLocaleDateString(),
     changes: [
@@ -697,6 +709,16 @@ async function claimDisplayName(rawName){
   const name=sanitizeDisplayName(rawName);
   if(!name)return {ok:false};
   const key=name.toLowerCase();
+  // v01.21: at most one deliberate name CHANGE after the initial claim.
+  // Re-confirming the name you already have doesn't count (isSameAsCurrent).
+  // Getting auto-renumbered because someone else claimed your base name
+  // doesn't touch this counter at all — that happens via the live
+  // listener, not here.
+  const isSameAsCurrent = S.identity && S.identity.key===key;
+  const setCount=Number(localStorage.getItem('n_identity_set_count')||'0');
+  if(!isSameAsCurrent && setCount>=2){
+    return {ok:false, locked:true};
+  }
   const result=await fbTransactItem('nosirt_names', key, current=>{
     if(!current) return {name, holders:[{userId:S.userId,name,number:null}], nextNumber:2};
     const existing=(current.holders||[]).find(h=>h.userId===S.userId);
@@ -716,6 +738,9 @@ async function claimDisplayName(rawName){
   localStorage.setItem('n_identity_name', mine.name);
   localStorage.setItem('n_identity_number', mine.number==null?'':String(mine.number));
   localStorage.setItem('n_identity_key', key);
+  if(!isSameAsCurrent){
+    localStorage.setItem('n_identity_set_count', String(setCount+1));
+  }
   startIdentityLiveListener(key);
   return {ok:true, name:mine.name, number:mine.number, wasFirst: mine.number==null};
 }
