@@ -673,7 +673,202 @@ async function sendPixieMessage(){
     return;
   }
 
-  setTimeout(()=>{ addPixieMessage('pixie',getPixieResponse(text)); },350+Math.random()*400);
+  // ── AI response via Gemini (server-side Netlify function) ──
+  // Falls back silently to the local hardcoded engine if the call fails,
+  // so Pixie is never completely silent even if the function is down.
+  sendPixieAiMessage(text);
+}
+
+// ═══ LIVE SITE CONTEXT — assembled fresh on every message ═══
+// Gathers everything knowable about the current state of the site and
+// packages it into a plain object that gets sent to the Netlify function
+// and injected into Pixie's system prompt. She can then reference real
+// state rather than guessing — what's playing, the weather, who's online,
+// what the latest episode is, what world the visitor is in, etc.
+function buildPixieSiteContext() {
+  const ctx = {};
+
+  // ── Current view / world ──
+  ctx.currentView = S.view || 'map';
+
+  // ── Music ──
+  ctx.musicPlaying = activeMusic || null; // 'lofi' | 'ancient' | 'dark' | 'podcast' | null
+  // Try to get the actual track name if it's ambient
+  if (activeMusic && typeof MUSIC !== 'undefined' && MUSIC[activeMusic]) {
+    ctx.musicTrackName = MUSIC[activeMusic].name || activeMusic;
+  }
+
+  // ── Podcast / episode ──
+  if (typeof currentEpisode !== 'undefined' && currentEpisode) {
+    ctx.currentEpisode = {
+      title: currentEpisode.title || null,
+      isLive: !!currentEpisode.isLive
+    };
+  }
+  // Latest episode across all shows (most recently added)
+  const allEps = (S.episodes || []).slice();
+  if (allEps.length) {
+    const latest = allEps.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0))[0];
+    ctx.latestEpisode = {
+      title: latest.title || null,
+      showId: latest.showId || null,
+      addedAt: latest.addedAt ? timeAgo(latest.addedAt) : null
+    };
+  }
+  // Show list (public shows, titles only — no IDs needed by Pixie)
+  const publicShows = (S.shows || []).filter(s => {
+    const t = (s.title || '').trim().toLowerCase();
+    return t !== 'pixie'; // hide the pixie shorts show
+  });
+  if (publicShows.length) {
+    ctx.shows = publicShows.map(s => ({
+      title: s.title,
+      isDefault: !!s.isDefault,
+      episodeCount: (S.episodes || []).filter(e => e.showId === s.id).length
+    }));
+  }
+
+  // ── Weather / environment ──
+  if (S.environment && S.environment.ready) {
+    const wv = typeof computeWeatherVisualState === 'function'
+      ? computeWeatherVisualState() : null;
+    const dn = typeof computeDayNightPhase === 'function'
+      ? computeDayNightPhase() : null;
+    const season = typeof computeSeason === 'function'
+      ? computeSeason() : null;
+    ctx.weather = {
+      condition: wv ? wv.kind : null,   // 'clear'|'rain'|'snow'|'thunder'|'fog'|'cloudy'
+      windy: wv ? wv.windy : false,
+      tempC: S.environment.tempC != null ? Math.round(S.environment.tempC) : null,
+      isDaytime: dn ? dn.isDaytime : null,
+      timeOfDay: dn
+        ? (dn.twilight > 0.5 ? (dn.isDaytime ? 'dawn/dusk' : 'night') : (dn.isDaytime ? 'day' : 'night'))
+        : null,
+      season
+    };
+  }
+
+  // ── Who's online ──
+  const onlineCount = (S.onlinePresence || []).length;
+  ctx.visitorsOnline = onlineCount; // includes the current visitor
+
+  // ── Visitor identity ──
+  if (S.identity && S.identity.name) {
+    ctx.visitorName = S.identity.name;
+    if (S.identity.number != null) ctx.visitorNumber = S.identity.number;
+  }
+
+  // ── Feature toggles (what sections are live) ──
+  ctx.activeFeatures = Object.entries(S.featureToggles || {})
+    .filter(([, v]) => v)
+    .map(([k]) => k);
+
+  // ── Community board / screams (counts, not content) ──
+  ctx.screamCount = (S.screams || []).length;
+
+  // ── Library ──
+  const lib = S.library || [];
+  ctx.libraryCount = lib.length;
+  if (lib.length) {
+    ctx.libraryTitles = lib.map(b => b.title).slice(0, 5); // first 5
+  }
+
+  return ctx;
+}
+
+// Sends the message to the Gemini-backed Netlify function and renders
+// the reply. Keeps the last N turns in memory (session only — not
+// persisted beyond the existing localStorage chat history) so Pixie
+// has short-term conversational context.
+const PIXIE_AI_HISTORY_MAX = 20; // turns kept in session memory
+let pixieAiHistory = []; // [{role:'user'|'model', text:string}]
+
+// Parses and executes an [ACTION:xxx] tag from the end of Gemini's reply.
+// Returns the clean reply text (tag stripped) and optionally an action
+// object for addPixieMessage to render as a button.
+function parsePixieAiAction(rawReply) {
+  const actionMatch = rawReply.match(/\[ACTION:([\w_]+)\]\s*$/);
+  if (!actionMatch) return { text: rawReply, action: null };
+
+  const cleanText = rawReply.replace(/\[ACTION:[\w_]+\]\s*$/, '').trim();
+  const tag = actionMatch[1];
+
+  let action = null;
+  switch (tag) {
+    case 'play_lofi':
+      action = {
+        label: '🎵 play lofi',
+        fn: () => { if (typeof toggleMusic === 'function') toggleMusic('lofi'); }
+      };
+      break;
+    case 'stop_music':
+      action = {
+        label: '⏹ stop music',
+        fn: () => {
+          if (typeof toggleMusic === 'function' && typeof activeMusic !== 'undefined' && activeMusic) {
+            toggleMusic(activeMusic); // toggling active track stops it
+          }
+        }
+      };
+      break;
+    case 'open_wireless':
+      action = {
+        label: '🎙 take me there',
+        fn: () => { closePixiePanel(); if (typeof gotoWirelessPageDirect === 'function') gotoWirelessPageDirect(); }
+      };
+      break;
+    case 'play_podcast':
+      action = {
+        label: '🎙 play episode',
+        fn: () => { pixiePlayMidnightArchive(); }
+      };
+      break;
+  }
+
+  return { text: cleanText, action };
+}
+
+async function sendPixieAiMessage(userText) {
+  // Add this message to session history for context
+  pixieAiHistory.push({ role: 'user', text: userText });
+  if (pixieAiHistory.length > PIXIE_AI_HISTORY_MAX) {
+    pixieAiHistory = pixieAiHistory.slice(-PIXIE_AI_HISTORY_MAX);
+  }
+
+  const thinkDelay = 400 + Math.random() * 500;
+
+  try {
+    const res = await fetch('/.netlify/functions/pixie-chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: userText,
+        history: pixieAiHistory.slice(0, -1),
+        isAdmin: !!(typeof S !== 'undefined' && S.adminUnlocked),
+        siteContext: buildPixieSiteContext() // live site state
+      })
+    });
+
+    const data = await res.json();
+
+    if (data.reply) {
+      // Strip action tag before storing in history
+      const { text, action } = parsePixieAiAction(data.reply);
+
+      pixieAiHistory.push({ role: 'model', text });
+      if (pixieAiHistory.length > PIXIE_AI_HISTORY_MAX) {
+        pixieAiHistory = pixieAiHistory.slice(-PIXIE_AI_HISTORY_MAX);
+      }
+
+      setTimeout(() => addPixieMessage('pixie', text, action || undefined), thinkDelay);
+    } else {
+      setTimeout(() => addPixieMessage('pixie', getPixieResponse(userText)), thinkDelay);
+    }
+
+  } catch (err) {
+    console.warn('Pixie AI call failed, using local fallback:', err.message);
+    setTimeout(() => addPixieMessage('pixie', getPixieResponse(userText)), thinkDelay);
+  }
 }
 
 
