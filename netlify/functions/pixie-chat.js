@@ -185,9 +185,15 @@ exports.handler = async function (event) {
     system_instruction: { parts: [{ text: systemPrompt }] },
     contents,
     generationConfig: {
-      maxOutputTokens: 120,
+      maxOutputTokens: 1500,
       temperature: 0.9,
-      topP: 0.9
+      topP: 0.9,
+      // gemini-flash-latest reasons internally before answering, and those
+      // hidden "thinking" tokens are deducted from maxOutputTokens too — at
+      // a low cap the model spends the whole budget thinking and has
+      // nothing left for the actual reply. Pixie doesn't need to reason,
+      // so this turns thinking off and reserves the full budget for text.
+      thinkingConfig: { thinkingBudget: 0 }
     }
   };
 
