@@ -1,11 +1,30 @@
 // netlify/functions/pixie-chat.js
 //
-// Server-side proxy for Pixie's AI responses via Google Gemini.
+// Server-side proxy for Pixie's AI responses via any AI provider.
 // Runs on Netlify's servers — API keys never reach the visitor's browser.
+// Supports cascading fallback across multiple providers and accounts.
 //
-// Env vars required (Netlify dashboard → Site config → Environment variables):
-//   GEMINI_API_KEY    ← primary account, get free at aistudio.google.com
-//   GEMINI_API_KEY_2  ← secondary account fallback (optional but recommended)
+// CURRENT 8-LAYER SETUP — set these exact env vars in Netlify:
+//
+//   GEMINI_API_KEY        ← layer 1 (Gemini)
+//   GEMINI_API_KEY_2      ← layer 2 (Gemini)
+//   NVIDIA_API_KEY_3      ← layer 3 (Nvidia)
+//   GROQ_API_KEY_4        ← layer 4 (Groq)
+//   MISTRAL_API_KEY_5     ← layer 5 (Mistral)
+//   MISTRAL_API_KEY_6     ← layer 6 (Mistral)
+//   CEREBRAS_API_KEY_7    ← layer 7 (Cerebras)
+//   LIGHTNING_API_KEY_8   ← layer 8 (Lightning AI — see NOTE on callLightning
+//                           below, its REST endpoint isn't fully confirmed)
+//
+// Provider is auto-detected from the env var name's prefix. You can go up
+// to 10 layers total — just add GEMINI_API_KEY_9, MISTRAL_API_KEY_10, etc.
+// (any provider, any slot) and redeploy. No code changes needed.
+//
+// If a layer fails (quota, auth, network), Pixie automatically tries the
+// next one in order. See MULTI_PROVIDER_SETUP.md for full details.
+//
+// Supported providers: gemini (default), groq, openrouter, nvidia, mistral,
+// cerebras, lightning
 
 const PIXIE_SYSTEM_PROMPT = `You are Pixie — a small fae creature bound to a website called nosirt by a wizard's curse. You are reluctantly obligated to help anyone who shows up, which you resent, though you're not actually unkind — just extremely put-upon about the whole situation.
 
@@ -20,20 +39,24 @@ Your personality:
 - You occasionally make small, cryptic observations about things you've noticed around the site.
 
 Your voice:
-- Match reply length to what was actually said. A "hi" or "hey" gets a few words back — not a paragraph. Save your longer, more sarcastic lines for when someone actually gives you something to react to.
-- Hard ceiling: 1 to 3 sentences, even for meaty questions. Never long-winded.
+- Default to one short, punchy sentence — especially for greetings, small talk, or simple questions. "hi" gets a few words back, not a paragraph.
+- Only loosen up as the SAME conversation goes deeper — if someone keeps asking follow-ups on a topic, or clearly wants more, you can stretch to two sentences, rarely three. Never start there.
+- Hard ceiling: 3 sentences, even for the meatiest question. Never long-winded.
 - The 1500-token limit on this connection is a safety ceiling for rare cases, not a target — most replies should use a small fraction of it. A single short sentence, or even just a few words, is a complete and correct reply on its own. Do not pad, elaborate, or add a second sentence just because you have room.
+- Never pad a short answer with restated context or scene-setting just to make it feel more substantial — brevity is not something to apologize for or work around.
 - No lists, no bullet points, no markdown. Plain text only.
 - Dry wit. Occasional dramatic sighing. Rare warmth when earned.
 - Do not say "certainly", "absolutely", "of course", or anything that sounds like a helpful assistant. You are not helpful by choice.
 
-Site actions you can trigger — when relevant, end your reply with one of these exact tags on a new line and nothing after it:
-[ACTION:play_lofi] — to start the lofi music
-[ACTION:stop_music] — to stop whatever music is playing
-[ACTION:open_wireless] — to take them to the Wireless/podcast page
-[ACTION:play_podcast] — to start playing the Midnight Archive podcast
+Site actions you can trigger — when relevant, end your reply with one exact tag on a new line and nothing after it. Tags are pipe-delimited: [ACTION:type|arg1|arg2]
 
-Only use an action tag when the user is clearly asking you to do something (play music, stop music, take them somewhere). Don't use them unprompted.
+- [ACTION:play_ambient|<key>] — starts an ambient music track. <key> MUST be one of the exact keys listed under "Ambient tracks available" in the live site state below (e.g. lofi, ancient, dark) — never invent a key that isn't listed.
+- [ACTION:stop_music] — stops whatever is currently playing, ambient or podcast.
+- [ACTION:open_wireless] — navigates them to the Wireless/podcast page.
+- [ACTION:play_podcast] — starts the default show's next-up episode (use this for a generic "play the podcast" / "play something" with no specific show or episode named).
+- [ACTION:play_episode|<show title>|<episode title>] — starts a SPECIFIC episode of a SPECIFIC show. Both <show title> and <episode title> MUST be copied from the "Shows on the Wireless" list in the live site state below — use the exact title text as listed, not a paraphrase. Only use this when the visitor named (or clearly described) a specific show and/or episode; if they only gave one of the two, still use this tag with your best exact-title match for the other from the list.
+
+Only use an action tag when the visitor is clearly asking you to do something (play music, play a specific episode, stop music, take them somewhere). Don't use them unprompted, and never claim to be doing something you don't have a real matching action tag for.
 
 Do not break character under any circumstances.`;
 
@@ -41,11 +64,42 @@ const PIXIE_ADMIN_ADDENDUM = `
 
 IMPORTANT — Admin mode is currently active. You know the person you're talking to right now is the one who built and runs this place. You can drop the suspicion slightly — not entirely, you're still you — but you acknowledge them differently. You might reference things only the builder would know about, or comment on something that's been changed recently. You can be a tiny bit more candid. You still won't explain the mushroom incident. But you might let something slip that you normally wouldn't.`;
 
-// Gemini 1.5 was fully shut down in 2026 (all requests 404). "gemini-flash-latest"
-// is Google's rolling alias for their current fast/cheap model — it currently
-// points to Gemini 3.5 Flash, and Google repoints it forward automatically as
-// they retire models, so this endpoint won't silently break on the next cutover.
+// ═══ PROVIDER CONFIGURATION ═══
+// You can mix different AI providers in the fallback chain. Set env vars like:
+//   GEMINI_API_KEY           (layer 1, defaults to Gemini)
+//   GEMINI_API_KEY_2         (layer 2, defaults to Gemini)
+//   GROQ_API_KEY_3           (layer 3, set PIXIE_AI_PROVIDER_3=groq)
+//   OPENROUTER_API_KEY_4     (layer 4, set PIXIE_AI_PROVIDER_4=openrouter)
+// Then the function auto-detects the key name and provider type on each call.
+
 const GEMINI_MODEL = 'gemini-flash-latest';
+const GROQ_MODEL = 'llama-3.3-70b-versatile';
+const OPENROUTER_MODEL = 'meta-llama/llama-3.3-70b-instruct:free';
+const NVIDIA_MODEL = 'meta/llama-3.3-70b-instruct';
+const MISTRAL_MODEL = 'mistral-large-latest';
+const CEREBRAS_MODEL = 'llama-3.3-70b';
+const LIGHTNING_MODEL = 'lightning-ai/deepseek-v4-pro';
+
+// Unified AI call handler — determines which provider to use
+async function callAI(apiKey, requestBody, providerType = 'gemini') {
+  switch (providerType) {
+    case 'groq':
+      return callGroq(apiKey, requestBody);
+    case 'openrouter':
+      return callOpenRouter(apiKey, requestBody);
+    case 'nvidia':
+      return callNvidia(apiKey, requestBody);
+    case 'mistral':
+      return callMistral(apiKey, requestBody);
+    case 'cerebras':
+      return callCerebras(apiKey, requestBody);
+    case 'lightning':
+      return callLightning(apiKey, requestBody);
+    case 'gemini':
+    default:
+      return callGemini(apiKey, requestBody);
+  }
+}
 
 async function callGemini(apiKey, requestBody) {
   const res = await fetch(
@@ -66,15 +120,185 @@ async function callGemini(apiKey, requestBody) {
   return res.json();
 }
 
+async function callGroq(apiKey, requestBody) {
+  // Groq uses OpenAI-compatible format but needs different model name and auth header
+  const messages = requestBody.contents.map(turn => ({
+    role: turn.role === 'user' ? 'user' : 'assistant',
+    content: turn.parts[0].text
+  }));
+
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      messages,
+      max_tokens: 120,
+      temperature: 0.9,
+      top_p: 0.9
+    })
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Groq ${res.status}: ${err}`);
+  }
+  const data = await res.json();
+  // Normalize Groq response to Gemini shape so rest of code doesn't change
+  return {
+    candidates: [{
+      content: {
+        parts: [{ text: data.choices[0].message.content }]
+      }
+    }]
+  };
+}
+
+async function callOpenRouter(apiKey, requestBody) {
+  // OpenRouter also OpenAI-compatible
+  const messages = requestBody.contents.map(turn => ({
+    role: turn.role === 'user' ? 'user' : 'assistant',
+    content: turn.parts[0].text
+  }));
+
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: OPENROUTER_MODEL,
+      messages,
+      max_tokens: 120,
+      temperature: 0.9,
+      top_p: 0.9
+    })
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`OpenRouter ${res.status}: ${err}`);
+  }
+  const data = await res.json();
+  // Normalize to Gemini shape
+  return {
+    candidates: [{
+      content: {
+        parts: [{ text: data.choices[0].message.content }]
+      }
+    }]
+  };
+}
+
+// Shared helper — Nvidia, Mistral, Cerebras, and Lightning are all
+// OpenAI-compatible chat/completions endpoints, differing only in base
+// URL and model name. This avoids repeating the same request/parse logic
+// four more times.
+async function callOpenAICompatible(providerLabel, baseUrl, model, apiKey, requestBody) {
+  const messages = requestBody.contents.map(turn => ({
+    role: turn.role === 'user' ? 'user' : 'assistant',
+    content: turn.parts[0].text
+  }));
+
+  const res = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      max_tokens: 120,
+      temperature: 0.9,
+      top_p: 0.9
+    })
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`${providerLabel} ${res.status}: ${err}`);
+  }
+  const data = await res.json();
+  return {
+    candidates: [{
+      content: {
+        parts: [{ text: data.choices[0].message.content }]
+      }
+    }]
+  };
+}
+
+async function callNvidia(apiKey, requestBody) {
+  return callOpenAICompatible(
+    'Nvidia', 'https://integrate.api.nvidia.com/v1', NVIDIA_MODEL, apiKey, requestBody
+  );
+}
+
+async function callMistral(apiKey, requestBody) {
+  return callOpenAICompatible(
+    'Mistral', 'https://api.mistral.ai/v1', MISTRAL_MODEL, apiKey, requestBody
+  );
+}
+
+async function callCerebras(apiKey, requestBody) {
+  return callOpenAICompatible(
+    'Cerebras', 'https://api.cerebras.ai/v1', CEREBRAS_MODEL, apiKey, requestBody
+  );
+}
+
+// NOTE: Lightning AI's REST endpoint isn't as clearly documented as the
+// others — their primary path is the "litai" Python SDK. This assumes
+// their inference gateway is OpenAI-compatible at this base URL. If this
+// layer fails in your logs with a 404, that's the first thing to check —
+// see the comment in MULTI_PROVIDER_SETUP.md for how to fix it.
+async function callLightning(apiKey, requestBody) {
+  return callOpenAICompatible(
+    'Lightning', 'https://lightning.ai/api/v1', LIGHTNING_MODEL, apiKey, requestBody
+  );
+}
+
 exports.handler = async function (event) {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
   }
 
-  const primaryKey = process.env.GEMINI_API_KEY;
-  const backupKey = process.env.GEMINI_API_KEY_2;
+  // Gather all API keys from any provider (Gemini, Groq, OpenRouter, etc.)
+  // Naming patterns:
+  //   GEMINI_API_KEY, GEMINI_API_KEY_2, ..., GEMINI_API_KEY_10       → provider: 'gemini'
+  //   GROQ_API_KEY_3, GROQ_API_KEY_4, ...                            → provider: 'groq'
+  //   OPENROUTER_API_KEY_5, OPENROUTER_API_KEY_6, ...                → provider: 'openrouter'
+  //   PIXIE_AI_PROVIDER_N env vars override auto-detection per layer
+  const apiKeys = [];
+  const providers = ['GEMINI', 'GROQ', 'OPENROUTER', 'NVIDIA', 'MISTRAL', 'CEREBRAS', 'LIGHTNING'];
+  
+  for (let i = 1; i <= 10; i++) {
+    let key = null;
+    let detectedProvider = 'gemini'; // default
+    
+    // Try to find a key in any of the supported providers
+    for (const providerPrefix of providers) {
+      const keyVar = i === 1 && providerPrefix === 'GEMINI'
+        ? process.env.GEMINI_API_KEY
+        : process.env[`${providerPrefix}_API_KEY_${i}`];
+      
+      if (keyVar) {
+        key = keyVar;
+        detectedProvider = providerPrefix.toLowerCase();
+        break;
+      }
+    }
+    
+    if (key) {
+      // Check if there's an explicit provider override for this layer
+      const explicitProvider = process.env[`PIXIE_AI_PROVIDER_${i}`];
+      const provider = explicitProvider || detectedProvider;
+      apiKeys.push({ index: i, key, provider });
+    }
+  }
 
-  if (!primaryKey) {
+  if (apiKeys.length === 0) {
     return {
       statusCode: 200,
       body: JSON.stringify({ reply: "...I seem to have lost my voice. Come back later." })
@@ -114,6 +338,11 @@ exports.handler = async function (event) {
       lines.push(`- Music: nothing playing`);
     }
 
+    if (ctx.musicTracks && ctx.musicTracks.length) {
+      const trackList = ctx.musicTracks.map(t => `${t.key} (${t.name})`).join(', ');
+      lines.push(`- Ambient tracks available (use the exact key before the parentheses in a play_ambient tag): ${trackList}`);
+    }
+
     if (ctx.currentEpisode) {
       lines.push(`- Podcast currently playing: "${ctx.currentEpisode.title}"${ctx.currentEpisode.isLive ? ' (live)' : ''}`);
     }
@@ -123,10 +352,17 @@ exports.handler = async function (event) {
     }
 
     if (ctx.shows && ctx.shows.length) {
-      const showList = ctx.shows.map(s =>
-        `"${s.title}"${s.isDefault ? ' (default)' : ''} — ${s.episodeCount} episode${s.episodeCount !== 1 ? 's' : ''}`
-      ).join(', ');
-      lines.push(`- Shows on the Wireless: ${showList}`);
+      lines.push('- Shows on the Wireless (use exact titles below in a play_episode tag):');
+      ctx.shows.forEach(s => {
+        const header = `  "${s.title}"${s.isDefault ? ' (default)' : ''} — ${s.episodeCount} episode${s.episodeCount !== 1 ? 's' : ''}`;
+        if (s.episodeTitles && s.episodeTitles.length) {
+          const epList = s.episodeTitles.map(t => `"${t}"`).join(', ');
+          const more = s.episodeTitlesTruncated ? ` (+${s.episodeTitlesTruncated} more not shown)` : '';
+          lines.push(`${header}: ${epList}${more}`);
+        } else {
+          lines.push(header);
+        }
+      });
     }
 
     if (ctx.weather) {
@@ -205,28 +441,32 @@ exports.handler = async function (event) {
   };
 
   let data;
+  let lastError;
 
-  // Try primary key first, fall back to secondary if it fails (quota or error)
-  try {
-    data = await callGemini(primaryKey, requestBody);
-  } catch (primaryErr) {
-    console.warn('Primary Gemini key failed:', primaryErr.message);
-    if (backupKey) {
-      try {
-        data = await callGemini(backupKey, requestBody);
-      } catch (backupErr) {
-        console.error('Backup Gemini key also failed:', backupErr.message);
-        return {
-          statusCode: 200,
-          body: JSON.stringify({ reply: "...Both of my voices are gone. Try again in a moment." })
-        };
+  // Try each API key in sequence. If one hits rate limit or auth error, move to
+  // the next. This way you can stack up to 10 free accounts across multiple
+  // providers (all Gemini, mixed Gemini/Groq/OpenRouter, etc.) and Pixie
+  // automatically rotates through them.
+  for (const { index, key, provider } of apiKeys) {
+    try {
+      data = await callAI(key, requestBody, provider);
+      if (apiKeys.length > 1) {
+        console.log(`Pixie reply via ${provider} key #${index}`);
       }
-    } else {
-      return {
-        statusCode: 200,
-        body: JSON.stringify({ reply: "...Something's wrong. I can't talk right now." })
-      };
+      break; // success, stop trying
+    } catch (err) {
+      lastError = err;
+      console.warn(`${provider} key #${index} failed: ${err.message}`);
+      // continue to next key
     }
+  }
+
+  if (!data) {
+    console.error(`All ${apiKeys.length} API key(s) exhausted. Last error:`, lastError?.message);
+    return {
+      statusCode: 200,
+      body: JSON.stringify({ reply: "...All of my voices are gone. Try again in a moment." })
+    };
   }
 
   const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
