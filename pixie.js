@@ -625,6 +625,14 @@ function buildPixieSiteContext() {
   if (activeMusic && typeof MUSIC !== 'undefined' && MUSIC[activeMusic]) {
     ctx.musicTrackName = MUSIC[activeMusic].name || activeMusic;
   }
+  // Every ambient track Pixie is able to start — the exact keys she must
+  // use in a play action tag (see PIXIE_AI_HISTORY_MAX comment / system
+  // prompt on the server for the tag format).
+  if (typeof MUSIC !== 'undefined') {
+    ctx.musicTracks = Object.keys(MUSIC)
+      .filter(k => k !== 'podcast') // podcast handled separately, see ctx.shows
+      .map(k => ({ key: k, name: MUSIC[k].name || k }));
+  }
 
   // ── Podcast / episode ──
   if (typeof currentEpisode !== 'undefined' && currentEpisode) {
@@ -644,19 +652,26 @@ function buildPixieSiteContext() {
       addedAt: latest.addedAt ? timeAgo(latest.addedAt) : null
     };
   }
-  // Show list (public shows, titles only — no IDs needed by Pixie)
+  // Show list (public shows) — includes each show's episode titles (capped)
+  // so Pixie can match a request like "play episode 3 of the map show" or
+  // "play the one about the lighthouse" to a real, playable episode.
   const publicShows = (S.shows || []).filter(s => {
     const t = (s.title || '').trim().toLowerCase();
     return t !== 'pixie'; // hide the pixie shorts show
   });
   if (publicShows.length) {
-    ctx.shows = publicShows.map(s => ({
-      title: s.title,
-      isDefault: !!s.isDefault,
-      // use showEpisodesAll for accurate count across all shows, not just current
-      episodeCount: (S.showEpisodesAll || []).filter(e => e.showId === s.id).length
-    }));
+    ctx.shows = publicShows.map(s => {
+      const eps = (S.showEpisodesAll || []).filter(e => e.showId === s.id);
+      return {
+        title: s.title,
+        isDefault: !!s.isDefault,
+        episodeCount: eps.length,
+        episodeTitles: eps.slice(0, 15).map(e => e.title),
+        episodeTitlesTruncated: eps.length > 15 ? eps.length - 15 : 0
+      };
+    });
   }
+
 
   // ── Weather / environment ──
   if (S.environment && S.environment.ready) {
@@ -713,33 +728,38 @@ function buildPixieSiteContext() {
 const PIXIE_AI_HISTORY_MAX = 20; // turns kept in session memory
 let pixieAiHistory = []; // [{role:'user'|'model', text:string}]
 
-// Parses and executes an [ACTION:xxx] tag from the end of Gemini's reply.
-// Returns the clean reply text (tag stripped) and optionally an action
-// object for addPixieMessage to render as a button.
+// Parses and executes an [ACTION:...] tag from the end of Gemini's reply.
+// Tag format: [ACTION:type|arg1|arg2] — pipe-delimited so it can carry a
+// show/episode title, not just a bare keyword. Recognized types:
+//   play_ambient|<key>            key is one of the MUSIC keys (e.g. lofi)
+//   play_podcast                  starts the default show's next-up episode
+//   play_episode|<show>|<episode> starts a specific episode of a specific show
+//   stop_music                    stops whatever's currently playing
+//   open_wireless                 navigates to the Wireless page
+// Returns the clean reply text (tag stripped) and, if the tag matched
+// something real, an action object — { label, fn } — describing what to run.
 function parsePixieAiAction(rawReply) {
-  const actionMatch = rawReply.match(/\[ACTION:([\w_]+)\]\s*$/m);
+  const actionMatch = rawReply.match(/\[ACTION:([^\]]+)\]\s*$/m);
   if (!actionMatch) return { text: rawReply, action: null };
 
-  const cleanText = rawReply.replace(/\[ACTION:[\w_]+\]\s*$/m, '').trim();
-  const tag = actionMatch[1];
+  const cleanText = rawReply.replace(/\[ACTION:[^\]]+\]\s*$/m, '').trim();
+  const parts = actionMatch[1].split('|').map(s => s.trim());
+  const type = parts[0];
 
   let action = null;
-  switch (tag) {
-    case 'play_lofi':
-      action = {
-        label: '🎵 play lofi',
-        fn: () => { if (typeof toggleMusic === 'function') toggleMusic('lofi'); }
-      };
+  switch (type) {
+    case 'play_ambient': {
+      const key = parts[1];
+      if (typeof MUSIC !== 'undefined' && MUSIC[key]) {
+        action = {
+          label: '🎵 ' + (MUSIC[key].name || key),
+          fn: () => pixiePlayAmbient(key)
+        };
+      }
       break;
+    }
     case 'stop_music':
-      action = {
-        label: '⏹ stop music',
-        fn: () => {
-          if (typeof toggleMusic === 'function' && typeof activeMusic !== 'undefined' && activeMusic) {
-            toggleMusic(activeMusic); // toggling active track stops it
-          }
-        }
-      };
+      action = { label: '⏹ stop music', fn: () => pixieStopMusic() };
       break;
     case 'open_wireless':
       action = {
@@ -748,14 +768,78 @@ function parsePixieAiAction(rawReply) {
       };
       break;
     case 'play_podcast':
+      action = { label: '🎙 play episode', fn: () => { pixiePlayMidnightArchive(); } };
+      break;
+    case 'play_episode': {
+      const showQuery = parts[1] || '';
+      const episodeQuery = parts[2] || '';
       action = {
         label: '🎙 play episode',
-        fn: () => { pixiePlayMidnightArchive(); }
+        fn: () => pixiePlayEpisodeByQuery(showQuery, episodeQuery)
       };
       break;
+    }
   }
 
   return { text: cleanText, action };
+}
+
+// Starts an ambient track (lofi/ancient/dark) — idempotent: if it's
+// already playing, does nothing rather than toggling it off, since
+// "play the lofi" should always mean "make sure it's playing."
+function pixiePlayAmbient(key) {
+  if (typeof MUSIC === 'undefined' || !MUSIC[key]) return;
+  if (activeMusic === key) return; // already playing — leave it alone
+  if (typeof toggleMusic === 'function') toggleMusic(key);
+}
+
+// Stops whatever's currently playing, ambient or podcast.
+function pixieStopMusic() {
+  if (typeof toggleMusic !== 'function') return;
+  if (activeMusic) toggleMusic(activeMusic); // toggling the active track stops it
+}
+
+// Finds and plays a specific episode of a specific show by (fuzzy,
+// case-insensitive) title match — this is how Pixie plays "episode 3"
+// or "the one about the lighthouse" rather than just the default show.
+// Falls back to the default Midnight Archive behavior if nothing matches
+// closely enough, so a slightly-off request still does something sensible.
+function pixiePlayEpisodeByQuery(showQuery, episodeQuery) {
+  if (S.featureToggles && S.featureToggles.wireless === false) return null;
+
+  const norm = s => (s || '').toLowerCase().trim();
+  const shows = S.shows || [];
+  const allEps = S.showEpisodesAll || [];
+
+  let show = null;
+  if (showQuery) {
+    const q = norm(showQuery);
+    show = shows.find(s => norm(s.title) === q) ||
+           shows.find(s => norm(s.title).includes(q) || q.includes(norm(s.title)));
+  }
+  if (!show) show = getMidnightArchiveShow ? getMidnightArchiveShow() : null;
+  if (!show) show = getDefaultShow ? getDefaultShow() : null;
+  if (!show) return null;
+
+  if (S.currentShowId !== show.id) {
+    S.currentShowId = show.id;
+    if (typeof refreshCurrentShowEpisodes === 'function') refreshCurrentShowEpisodes();
+  }
+
+  const showEps = allEps.filter(e => e.showId === show.id);
+  let ep = null;
+  if (episodeQuery) {
+    const q = norm(episodeQuery);
+    ep = showEps.find(e => norm(e.title) === q) ||
+         showEps.find(e => norm(e.title).includes(q) || q.includes(norm(e.title)));
+  }
+  if (!ep) ep = (typeof pickDefaultEpisode === 'function') ? pickDefaultEpisode() : (showEps[0] || null);
+  if (!ep) return null;
+
+  if (typeof loadEpisode === 'function') loadEpisode(ep);
+  activeMusic = 'podcast';
+  if (typeof updateNP === 'function') updateNP('🎙 ' + ep.title);
+  return ep;
 }
 
 async function sendPixieAiMessage(userText) {
@@ -790,7 +874,12 @@ async function sendPixieAiMessage(userText) {
         pixieAiHistory = pixieAiHistory.slice(-PIXIE_AI_HISTORY_MAX);
       }
 
-      setTimeout(() => addPixieMessage('pixie', text, action || undefined), thinkDelay);
+      setTimeout(() => {
+        // Auto-run the action immediately — e.g. music actually starts
+        // playing right away instead of waiting on a tap to confirm it.
+        if (action && typeof action.fn === 'function') action.fn();
+        addPixieMessage('pixie', text);
+      }, thinkDelay);
     } else {
       setTimeout(() => addPixieMessage('pixie', getPixieResponse(userText)), thinkDelay);
     }
@@ -840,6 +929,27 @@ let pixieMoved=false;
 let pixieWanderTimer=null;
 let pixieAway=false;
 
+// v01.21: PERSISTENT QUICK-ACCESS TAB — her wandering icon can be off
+// exploring/hiding at the edge of the screen (or mid-flight, invisible)
+// right when someone wants to talk to her. This small always-visible
+// tab sits just above the bottom nav and opens her panel directly, same
+// as tapping her wandering icon, so people don't have to wait for her.
+function initPixieQuickTab(){
+  if($('pixie-quick-tab'))return; // don't double-create on re-init
+  const tab=document.createElement('div');
+  tab.id='pixie-quick-tab';
+  tab.textContent='🧚 Pixie';
+  tab.style.cssText=[
+    'position:fixed','right:14px','bottom:calc(78px + env(safe-area-inset-bottom))',
+    'z-index:41','background:rgba(20,15,10,.85)','border:1px solid rgba(200,137,42,.3)',
+    'border-radius:16px','padding:6px 12px','color:var(--cream,#f4ead9)',
+    'font-family:\'IM Fell English\',serif','font-style:italic','font-size:.78rem',
+    'cursor:pointer','backdrop-filter:blur(4px)','transition:all .25s','user-select:none'
+  ].join(';');
+  tab.addEventListener('click',()=>openPixiePanel());
+  document.body.appendChild(tab);
+}
+
 function initPixie(){
   const icon=$('pixie-icon');
   if(!icon)return;
@@ -849,6 +959,8 @@ function initPixie(){
   icon.style.top=(window.innerHeight*0.22)+'px';
 
   icon.addEventListener('click',()=>{ if(!pixieMoved)openPixiePanel(); });
+
+  initPixieQuickTab();
 
   let startX=0,startY=0;
   icon.addEventListener('pointerdown',(e)=>{
