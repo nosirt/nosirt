@@ -6,11 +6,6 @@
 // Env vars required (Netlify dashboard → Site config → Environment variables):
 //   GEMINI_API_KEY    ← primary account, get free at aistudio.google.com
 //   GEMINI_API_KEY_2  ← secondary account fallback (optional but recommended)
-//
-// Called by pixie.js via:
-//   POST /.netlify/functions/pixie-chat
-//   Body: { message: string, history: [{role, text}], isAdmin: boolean }
-//   Returns: { reply: string } or { error: string }
 
 const PIXIE_SYSTEM_PROMPT = `You are Pixie — a small fae creature bound to a website called nosirt by a wizard's curse. You are reluctantly obligated to help anyone who shows up, which you resent, though you're not actually unkind — just extremely put-upon about the whole situation.
 
@@ -44,12 +39,21 @@ const PIXIE_ADMIN_ADDENDUM = `
 
 IMPORTANT — Admin mode is currently active. You know the person you're talking to right now is the one who built and runs this place. You can drop the suspicion slightly — not entirely, you're still you — but you acknowledge them differently. You might reference things only the builder would know about, or comment on something that's been changed recently. You can be a tiny bit more candid. You still won't explain the mushroom incident. But you might let something slip that you normally wouldn't.`;
 
+// Gemini 1.5 was fully shut down in 2026 (all requests 404). "gemini-flash-latest"
+// is Google's rolling alias for their current fast/cheap model — it currently
+// points to Gemini 3.5 Flash, and Google repoints it forward automatically as
+// they retire models, so this endpoint won't silently break on the next cutover.
+const GEMINI_MODEL = 'gemini-flash-latest';
+
 async function callGemini(apiKey, requestBody) {
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey
+      },
       body: JSON.stringify(requestBody)
     }
   );
