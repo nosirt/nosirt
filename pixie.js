@@ -568,7 +568,6 @@ async function sendPixieMessage(){
   input.value='';
   bumpPixieAffection();
   resetPixieIdleTimers();
-  const data=await loadPixieLines();
 
   // ── Name capture ──
   const wasAwaitingName=S.pixieAwaiting==='name';
@@ -577,6 +576,7 @@ async function sendPixieMessage(){
   if((wasAwaitingName && nameReplyLooksValid) || unprompted){
     S.pixieAwaiting=null;
     const raw=(wasAwaitingName&&nameReplyLooksValid)?text:unprompted;
+    const data=await loadPixieLines();
     setTimeout(async ()=>{
       const res=await claimDisplayName(raw);
       if(res.locked){
@@ -599,83 +599,10 @@ async function sendPixieMessage(){
     S.pixieAwaiting=null;
   }
 
-  // ── Continue an in-progress conversation tree, if any ──
-  if(S.pixieAwaiting && S.pixieAwaiting.type==='tree'){
-    const lines=advancePixieTree(text);
-    if(lines && lines.length){
-      setTimeout(()=>{ lines.forEach(l=>addPixieMessage('pixie',l)); },350+Math.random()*400);
-      return;
-    }
-  }
-
-  // v01.20: direct actions — playing/linking site content, and real
-  // weather Q&A (with actual numbers), checked before the generic
-  // dialogue engine since these should DO something, not just talk.
-  const t=text.toLowerCase();
-  const wantsLofi=/\bplay\s+(some\s+)?(lofi|lo-fi|ambient|music|something (soothing|chill|calm))\b/.test(t);
-  const wantsPodcast=/\bplay\s+(the\s+)?(podcast|midnight archive|newest episode|latest episode|an episode)\b/.test(t);
-  const asksNewEpisode=!wantsPodcast && /\b(new episode|newest episode|latest episode|is there a new)\b/.test(t);
-  // v01.21 FIX: broadened significantly — "how's the weather", "what's
-  // it like outside", "temp", etc previously fell through to the old
-  // canned (non-real-data) topic reply because this regex was too narrow.
-  const wantsWeather=/\b(what'?s|how'?s|hows) (the )?weather\b|weather (like|report|today|right now)|what'?s it like (outside|out there)|\bhow (windy|hot|cold|warm)\b|\btemp(erature)?\b.*\?|is it (raining|snowing|storming)\b/.test(t);
-  const isGreetingish=/\b(hi|hello|hey|sup|yo)\b/.test(t)||/what'?s up|whats up/.test(t);
-
-  if(wantsLofi){
-    setTimeout(()=>{
-      if(typeof toggleMusic==='function')toggleMusic('lofi');
-      addPixieMessage('pixie',pickRandom(["Fine. Lofi it is. Don't get used to me doing what you ask.","There. Playing. Happy now?","Done. That was almost enjoyable to do."]));
-    },350);
-    return;
-  }
-  if(wantsPodcast){
-    setTimeout(()=>{
-      const ep=pixiePlayMidnightArchive();
-      if(ep){
-        addPixieMessage('pixie',`Fine, playing "${ep.title}" from Midnight Archive. Don't make this weird.`,
-          {label:'🎙 take me there',fn:()=>{ closePixiePanel(); if(typeof gotoWirelessPageDirect==='function')gotoWirelessPageDirect(); }});
-      }else{
-        addPixieMessage('pixie',"There's nothing to play yet. Someone hasn't uploaded anything, and it isn't me.");
-      }
-    },350);
-    return;
-  }
-  if(asksNewEpisode){
-    setTimeout(()=>{
-      addPixieMessage('pixie',"There might be. Go look, I'm not your notification system.",
-        {label:'🎙 check the wireless',fn:()=>{ closePixiePanel(); if(typeof gotoWirelessPageDirect==='function')gotoWirelessPageDirect(); }});
-    },350);
-    return;
-  }
-  if(wantsWeather && isGreetingish){
-    // v01.20: combined response — the specific example given was
-    // "hi, what's up, nice weather" landing as one reply, not three.
-    setTimeout(()=>{
-      const greetLine=pickLineFromCategory(data.special&&data.special.sayHi)||pickLineFromCategory(data.greetings)||"Hi.";
-      addPixieMessage('pixie',greetLine+' '+getRealWeatherLine());
-    },350+Math.random()*400);
-    return;
-  }
-  if(wantsWeather){
-    setTimeout(()=>{ addPixieMessage('pixie',getRealWeatherLine()); },350);
-    return;
-  }
-
-  // ── Start a new conversation tree, if this message triggers one ──
-  const tree=findPixieTree(text);
-  if(tree){
-    setTimeout(()=>{
-      (tree.open||[]).forEach(l=>addPixieMessage('pixie',l));
-      if(tree.branches && tree.branches.length){
-        S.pixieAwaiting={type:'tree', branches:tree.branches, fallback:tree.fallback};
-      }
-    },350+Math.random()*400);
-    return;
-  }
-
-  // ── AI response via Gemini (server-side Netlify function) ──
-  // Falls back silently to the local hardcoded engine if the call fails,
-  // so Pixie is never completely silent even if the function is down.
+  // ── Everything else → Gemini first, local engine as fallback ──
+  // All intent handling (music, weather, podcast, greetings, etc.) is now
+  // done by the AI via action tags and live site context. The old keyword
+  // intercepts have been removed so Gemini is always the primary path.
   sendPixieAiMessage(text);
 }
 
@@ -705,8 +632,9 @@ function buildPixieSiteContext() {
       isLive: !!currentEpisode.isLive
     };
   }
-  // Latest episode across all shows (most recently added)
-  const allEps = (S.episodes || []).slice();
+  // Latest episode across ALL shows (most recently added) — use showEpisodesAll
+  // not S.episodes which is filtered to only the currently open show
+  const allEps = (S.showEpisodesAll || []).slice();
   if (allEps.length) {
     const latest = allEps.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0))[0];
     ctx.latestEpisode = {
@@ -724,7 +652,8 @@ function buildPixieSiteContext() {
     ctx.shows = publicShows.map(s => ({
       title: s.title,
       isDefault: !!s.isDefault,
-      episodeCount: (S.episodes || []).filter(e => e.showId === s.id).length
+      // use showEpisodesAll for accurate count across all shows, not just current
+      episodeCount: (S.showEpisodesAll || []).filter(e => e.showId === s.id).length
     }));
   }
 
@@ -787,10 +716,10 @@ let pixieAiHistory = []; // [{role:'user'|'model', text:string}]
 // Returns the clean reply text (tag stripped) and optionally an action
 // object for addPixieMessage to render as a button.
 function parsePixieAiAction(rawReply) {
-  const actionMatch = rawReply.match(/\[ACTION:([\w_]+)\]\s*$/);
+  const actionMatch = rawReply.match(/\[ACTION:([\w_]+)\]\s*$/m);
   if (!actionMatch) return { text: rawReply, action: null };
 
-  const cleanText = rawReply.replace(/\[ACTION:[\w_]+\]\s*$/, '').trim();
+  const cleanText = rawReply.replace(/\[ACTION:[\w_]+\]\s*$/m, '').trim();
   const tag = actionMatch[1];
 
   let action = null;
