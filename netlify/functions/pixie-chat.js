@@ -191,9 +191,14 @@ exports.handler = async function (event) {
       // gemini-flash-latest reasons internally before answering, and those
       // hidden "thinking" tokens are deducted from maxOutputTokens too — at
       // a low cap the model spends the whole budget thinking and has
-      // nothing left for the actual reply. Pixie doesn't need to reason,
-      // so this turns thinking off and reserves the full budget for text.
-      thinkingConfig: { thinkingBudget: 0 }
+      // nothing left for the actual reply. Pixie doesn't need to reason
+      // for one-line quips, so "minimal" reserves as much of the budget
+      // as this model allows for the actual visible text.
+      // NOTE: this model is Gemini 3.5 Flash under the hood, which uses
+      // thinkingLevel — NOT the older thinkingBudget field (that one's
+      // only valid on Gemini 2.5-series models and gets rejected here,
+      // which is what was causing every single reply to fail before).
+      thinkingConfig: { thinkingLevel: 'minimal' }
     }
   };
 
