@@ -384,8 +384,9 @@ function addPixieMessage(who,text,action){
 }
 function handlePixieInputKeydown(e){ if(e.key==='Enter')sendPixieMessage(); }
 
-// v01.19: idle detection while her panel is open — "...you still
-// there?" after 20s of silence, "did you fall asleep?" after 60s.
+// v01.19: idle detection while her panel is open — a short nudge after
+// 10 minutes of silence, a second one after 1 hour, then nothing further
+// until the user sends another message (which resets both timers).
 // Reset on every message sent; cleared entirely when the panel closes
 // so nothing pops up after someone's already left.
 let pixieIdleShortTimer=null;
@@ -397,10 +398,10 @@ function resetPixieIdleTimers(){
   if(!panel||!panel.classList.contains('open'))return;
   pixieIdleShortTimer=setTimeout(()=>{
     loadPixieLines().then(data=>{ if(data.idleShort&&data.idleShort.length)addPixieMessage('pixie',pickRandom(data.idleShort)); });
-  },20000);
+  },10*60*1000);
   pixieIdleLongTimer=setTimeout(()=>{
     loadPixieLines().then(data=>{ if(data.idleLong&&data.idleLong.length)addPixieMessage('pixie',pickRandom(data.idleLong)); });
-  },60000);
+  },60*60*1000);
 }
 function clearPixieIdleTimers(){
   clearTimeout(pixieIdleShortTimer);
