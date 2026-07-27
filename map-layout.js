@@ -67,6 +67,13 @@ function enterSite(skipAnim){
     if(typeof fbListenPresence==='function'){
       fbListenPresence(items=>{ if(typeof onPresenceUpdate==='function')onPresenceUpdate(items); });
     }
+    // v01.24: real accounts — kick off verifying any saved login. This
+    // is async, so it won't actually finish before the first heartbeat
+    // below fires (meaning that very first beat may briefly go out as
+    // "logged out") — accounts.js's initAccounts() compensates by
+    // pushing its own fresh presence update the moment verification
+    // resolves, so the gap is at most a beat, not stuck that way.
+    if(typeof initAccounts==='function')initAccounts();
     if(typeof startPresenceHeartbeat==='function')startPresenceHeartbeat();
     // v01.14: living-map environment — location + weather plumbing
     // (see environment.js). Fire-and-forget, same pattern as the other

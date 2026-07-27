@@ -52,7 +52,7 @@ function onPresenceUpdate(items){
 // enterSite() in map-layout.js.
 function startPresenceHeartbeat(){
   const beat = ()=>{
-    fbSavePresence(S.userId, { id:S.userId, num:getChatNum(), displayName:getDisplayLabel(), ts:Date.now() });
+    fbSavePresence(S.userId, { id:S.userId, num:getChatNum(), displayName:getDisplayLabel(), avatarEmoji:getDisplayAvatar(), ts:Date.now() });
     // Occasional lazy prune of very stale presence docs (any client can
     // do this safely — deletes are idempotent).
     (S.onlinePresence||[]).forEach(p=>{
@@ -103,7 +103,8 @@ function renderOnlineList(){
   }
   el.innerHTML = users.map(u=>{
     const label = u.displayName || ('user('+u.num+')');
-    return `<div class="online-user-row">🟢 ${esc(label)}${u.num===myNum?' <span class="online-you">(you)</span>':''}</div>`;
+    const avatar = u.avatarEmoji ? esc(u.avatarEmoji)+' ' : '';
+    return `<div class="online-user-row">🟢 ${avatar}${esc(label)}${u.num===myNum?' <span class="online-you">(you)</span>':''}</div>`;
   }).join('');
 }
 
@@ -131,6 +132,9 @@ function switchChatTab(tab){
     updateChatUnreadBadge();
     renderChatMessages();
     scrollChatToBottom();
+  }
+  if(tab==='personal' && typeof renderDmView==='function'){
+    renderDmView();
   }
   if(tab==='stone'){
     $('stone-textarea').value = localStorage.getItem('n_stone') || '';
@@ -170,11 +174,21 @@ function renderChatMessages(){
     let media = '';
     if(m.gifUrl) media = `<img class="chat-media" src="${esc(m.gifUrl)}" loading="lazy" alt="gif">`;
     else if(m.imageUrl) media = `<img class="chat-media" src="${esc(m.imageUrl)}" loading="lazy" alt="image">`;
+    else if(m.sharedCard && typeof renderSharedCardHtml==='function') media = renderSharedCardHtml(m.sharedCard, mine);
     const textPart = m.text ? `<span class="chat-text">${esc(m.text)}</span>` : '';
     const label = m.displayName || ('user('+m.num+')');
+    const avatar = m.avatarEmoji ? esc(m.avatarEmoji)+' ' : '';
+    // v01.24: only accounts are DM-able (anonymous "user(#####)" has no
+    // persistent identity to attach a DM to) — so only a message from
+    // a logged-in account gets the tap-to-DM affordance. accountUsername
+    // is only present on messages sent while logged in (see sendChatMessage).
+    const nameIsClickable = !mine && m.accountUsername;
+    const nameHtml = nameIsClickable
+      ? `<span class="chat-user chat-user-clickable" onclick="openDmPopup('${esc(m.accountUsername)}','${esc(label)}')">${avatar}${esc(label)}</span>`
+      : `<span class="chat-user">${avatar}${esc(label)}</span>`;
     return `<div class="chat-msg${mine?' mine':''}">
       <div class="chat-msg-head">
-        <span class="chat-user">${esc(label)}</span>${delBtn}
+        ${nameHtml}${delBtn}
       </div>
       ${textPart}
       ${media}
@@ -218,7 +232,7 @@ function sendChatMessage(){
   if(text.length > CHAT_MAX_LEN) text = text.slice(0, CHAT_MAX_LEN);
   chatLastSentAt = now;
   const id = 'c'+now+Math.random().toString(36).slice(2,8);
-  fbSaveChatMsg(id, { id, num:getChatNum(), displayName:getDisplayLabel(), text:filt(text), gifUrl:null, imageUrl:null, imagePath:null, ts:now });
+  fbSaveChatMsg(id, { id, num:getChatNum(), displayName:getDisplayLabel(), avatarEmoji:getDisplayAvatar(), accountUsername:(S.account?S.account.username:null), text:filt(text), gifUrl:null, imageUrl:null, imagePath:null, ts:now });
   input.value = '';
 }
 
@@ -229,14 +243,25 @@ async function sendChatImage(file){
   if(!res) return;
   const now = Date.now();
   const id = 'c'+now+Math.random().toString(36).slice(2,8);
-  fbSaveChatMsg(id, { id, num:getChatNum(), displayName:getDisplayLabel(), text:'', gifUrl:null, imageUrl:res.url, imagePath:res.path, ts:now });
+  fbSaveChatMsg(id, { id, num:getChatNum(), displayName:getDisplayLabel(), avatarEmoji:getDisplayAvatar(), accountUsername:(S.account?S.account.username:null), text:'', gifUrl:null, imageUrl:res.url, imagePath:res.path, ts:now });
 }
 
 function sendChatGif(gifUrl){
   const now = Date.now();
   const id = 'c'+now+Math.random().toString(36).slice(2,8);
-  fbSaveChatMsg(id, { id, num:getChatNum(), displayName:getDisplayLabel(), text:'', gifUrl, imageUrl:null, imagePath:null, ts:now });
+  fbSaveChatMsg(id, { id, num:getChatNum(), displayName:getDisplayLabel(), avatarEmoji:getDisplayAvatar(), accountUsername:(S.account?S.account.username:null), text:'', gifUrl, imageUrl:null, imagePath:null, ts:now });
   closeGifSearch();
+}
+
+// Called by sharing.js's picker when the share context is global chat.
+// Global chat already writes straight to Firestore for everything else
+// (public, anonymous-by-default, lower stakes than a DM) — a shared
+// card follows that same existing trust model, unlike DM sends.
+function sendChatSharedCard(card){
+  const now = Date.now();
+  const id = 'c'+now+Math.random().toString(36).slice(2,8);
+  fbSaveChatMsg(id, { id, num:getChatNum(), displayName:getDisplayLabel(), avatarEmoji:getDisplayAvatar(), accountUsername:(S.account?S.account.username:null), text:'', gifUrl:null, imageUrl:null, imagePath:null, sharedCard:card, ts:now });
+  toast('shared');
 }
 function sendChatGifByIndex(i){
   const url = (window._gifSearchResults||[])[i];

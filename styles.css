@@ -415,6 +415,9 @@ button{touch-action:manipulation}
   font-family:'Cinzel Decorative',serif;font-size:.62rem;letter-spacing:.05em;text-transform:uppercase;
   cursor:pointer;border-bottom:2px solid transparent;}
 .chat-tab-btn.active{color:var(--amber);border-bottom-color:var(--amber);}
+/* v01.24: playlist panel's playing/saved tabs, share picker's tabs */
+.playlist-panel-tab-btn,.share-tab-btn{border-bottom:2px solid transparent;}
+.playlist-panel-tab-btn.active,.share-tab-btn.active{color:var(--amber);border-bottom-color:var(--amber);}
 .chat-panel-close{background:transparent;border:none;color:rgba(196,191,176,.5);font-size:.9rem;
   cursor:pointer;padding:10px 12px;flex-shrink:0;}
 
@@ -505,6 +508,11 @@ button{touch-action:manipulation}
 .music-opt-icon{font-size:1.3rem;flex-shrink:0;}
 .music-opt-name{font-family:'Crimson Text',serif;font-size:.9rem;color:var(--cream);}
 .music-opt-type{font-size:.7rem;color:var(--fog);opacity:.7;}
+/* v01.24: "+" button to save a track/episode to your personal playlist */
+.playlist-add-btn{margin-left:auto;flex-shrink:0;width:26px;height:26px;border-radius:50%;
+  border:1px solid rgba(200,137,42,.35);background:rgba(20,15,10,.8);color:var(--amber);
+  font-size:1rem;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.playlist-add-btn:hover{background:rgba(200,137,42,.25);}
 .modal-close{margin-top:16px;background:transparent;border:1px solid rgba(196,191,176,.2);
   border-radius:20px;padding:8px 24px;color:var(--fog);font-family:'IM Fell English',serif;font-style:italic;cursor:pointer;}
 

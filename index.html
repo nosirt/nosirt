@@ -529,6 +529,36 @@
       </div>
     </div>
 
+    <!-- v01.24: real account — sign in/up (single action, no password)
+         and, once logged in, the emoji "face" others see live. This is
+         a SEPARATE system from the admin login right below it — being
+         logged into an account never grants admin access, and vice
+         versa. The admin section underneath is untouched from before. -->
+    <div style="border-top:1px solid rgba(200,137,42,.15);padding-top:12px">
+      <div style="font-size:.75rem;color:var(--fog);opacity:.6;margin-bottom:8px;font-family:'Cinzel Decorative',serif">account</div>
+
+      <div id="account-logged-out" style="display:block">
+        <input type="text" id="account-username-input" class="sq-input" placeholder="pick a username" maxlength="20"
+          style="margin:0;font-size:.75rem;padding:6px 8px;height:28px;margin-bottom:8px"
+          onkeydown="if(event.key==='Enter')handleSignInOrUp()">
+        <button class="sq-submit" onclick="handleSignInOrUp()" style="width:100%;font-size:.75rem;padding:6px">sign in / sign up</button>
+        <div id="account-error" style="font-size:.65rem;color:#c85a5a;font-family:'IM Fell English',serif;font-style:italic;margin-top:6px"></div>
+        <div style="font-size:.65rem;color:var(--fog);opacity:.5;font-family:'IM Fell English',serif;font-style:italic;margin-top:6px">no password — this browser remembers you. new username creates an account, an existing one (that this browser made) logs back in.</div>
+      </div>
+
+      <div id="account-logged-in" style="display:none;text-align:center">
+        <label for="account-avatar-input" style="display:inline-block;font-size:2rem;cursor:pointer;line-height:1;margin-bottom:6px" title="tap to change your face">
+          <span id="account-avatar-display">🙂</span>
+        </label>
+        <input type="text" id="account-avatar-input" maxlength="8" style="position:absolute;opacity:0;width:1px;height:1px;pointer-events:none"
+          onchange="handleAvatarEmojiChange(this)" oninput="if(this.value.length>0)this.blur()">
+        <div style="font-size:.6rem;color:var(--fog);opacity:.5;font-family:'IM Fell English',serif;font-style:italic;margin-bottom:8px">tap your face to change it — pick one emoji</div>
+        <div id="account-name-display" style="font-family:'Cinzel Decorative',serif;font-size:.85rem;color:var(--amber);margin-bottom:10px"></div>
+        <button class="sq-submit" onclick="openPlaylistPanel()" style="width:100%;font-size:.75rem;margin-bottom:8px">🎵 my playlist</button>
+        <button class="sq-submit" onclick="handleAccountLogout()" style="width:100%;font-size:.75rem">log out</button>
+      </div>
+    </div>
+
     <!-- Admin login section -->
     <div style="border-top:1px solid rgba(200,137,42,.15);padding-top:12px">
       <div id="admin-login-form-profile" style="display:flex;flex-direction:column;gap:8px">
@@ -655,6 +685,7 @@
       <div class="chat-input-bar">
         <button id="chat-media-btn" class="chat-media-btn" style="display:none" onclick="handleChatMediaBtn()"></button>
         <input id="chat-image-input" type="file" accept="image/*" style="display:none" onchange="handleChatImageFileSelected(this)">
+        <button class="chat-send-btn" onclick="openSharePicker({type:'global'})" title="share something">📎</button>
         <input id="chat-global-input" class="chat-text-input" type="text" placeholder="say something…" maxlength="500" onkeydown="handleChatInputKeydown(event)">
         <button class="chat-send-btn" onclick="sendChatMessage()">➤</button>
       </div>
@@ -663,7 +694,7 @@
     <div id="chat-tab-personal" class="chat-tab-body" style="display:none">
       <div class="chat-under-construction">
         <div style="font-size:1.6rem;margin-bottom:8px">🚧</div>
-        personal chat is still being built.<br>check back soon.
+        DMs are next — accounts are live now (see your profile), threads land soon.
       </div>
     </div>
 
@@ -782,17 +813,20 @@
   <div class="modal-title">♪ sounds</div>
   <div class="modal-sub">tap to play · tap again to stop</div>
   <div class="music-options">
-    <div class="music-opt" data-key="ancient" onclick="toggleMusic('ancient')">
-      <span class="music-opt-icon">🏰</span>
-      <div><div class="music-opt-name">Ancient Ambience</div><div class="music-opt-type">built in · medieval drone & strings</div></div>
+    <div class="music-opt" data-key="ancient">
+      <span class="music-opt-icon" onclick="toggleMusic('ancient')">🏰</span>
+      <div onclick="toggleMusic('ancient')"><div class="music-opt-name">Ancient Ambience</div><div class="music-opt-type">built in · medieval drone & strings</div></div>
+      <button class="playlist-add-btn" onclick="event.stopPropagation();addToPlaylist({type:'ambient',key:'ancient',name:'Ancient Ambience'})" title="save to your playlist">+</button>
     </div>
-    <div class="music-opt" data-key="lofi" onclick="toggleMusic('lofi')">
-      <span class="music-opt-icon">📻</span>
-      <div><div class="music-opt-name">Lofi Hip Hop</div><div class="music-opt-type">live · chill beats 24/7</div></div>
+    <div class="music-opt" data-key="lofi">
+      <span class="music-opt-icon" onclick="toggleMusic('lofi')">📻</span>
+      <div onclick="toggleMusic('lofi')"><div class="music-opt-name">Lofi Hip Hop</div><div class="music-opt-type">live · chill beats 24/7</div></div>
+      <button class="playlist-add-btn" onclick="event.stopPropagation();addToPlaylist({type:'ambient',key:'lofi',name:'Lofi Hip Hop'})" title="save to your playlist">+</button>
     </div>
-    <div class="music-opt" data-key="dark" onclick="toggleMusic('dark')">
-      <span class="music-opt-icon">🌑</span>
-      <div><div class="music-opt-name">Dark Ambient</div><div class="music-opt-type">live · eerie atmospheres</div></div>
+    <div class="music-opt" data-key="dark">
+      <span class="music-opt-icon" onclick="toggleMusic('dark')">🌑</span>
+      <div onclick="toggleMusic('dark')"><div class="music-opt-name">Dark Ambient</div><div class="music-opt-type">live · eerie atmospheres</div></div>
+      <button class="playlist-add-btn" onclick="event.stopPropagation();addToPlaylist({type:'ambient',key:'dark',name:'Dark Ambient'})" title="save to your playlist">+</button>
     </div>
     <div class="music-opt" data-key="podcast" onclick="toggleMusic('podcast')">
       <span class="music-opt-icon">🎙</span>
@@ -800,6 +834,43 @@
     </div>
   </div>
   <button class="modal-close" onclick="closeMusicModal()">close</button>
+</div>
+
+<!-- v01.24: personal playlist — "your own Spotify corner" -->
+<div id="playlist-panel" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:300px;max-height:70vh;background:rgba(10,8,6,.98);border:1px solid rgba(200,137,42,.3);
+  border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,.7);z-index:110;display:flex;flex-direction:column;overflow:hidden">
+  <div style="padding:14px;border-bottom:1px solid rgba(200,137,42,.15);display:flex;justify-content:space-between;align-items:center">
+    <div class="modal-title" style="margin:0">🎵 your playlist</div>
+    <button onclick="closePlaylistPanel()" style="background:none;border:none;color:var(--amber);font-size:1.2rem;cursor:pointer">✕</button>
+  </div>
+  <div style="display:flex;border-bottom:1px solid rgba(200,137,42,.15)">
+    <button class="playlist-panel-tab-btn active" data-tab="playing" onclick="switchPlaylistPanelTab('playing')" style="flex:1;background:none;border:none;padding:8px;color:var(--fog);font-size:.72rem;cursor:pointer">▶ playing</button>
+    <button class="playlist-panel-tab-btn" data-tab="saved" onclick="switchPlaylistPanelTab('saved')" style="flex:1;background:none;border:none;padding:8px;color:var(--fog);font-size:.72rem;cursor:pointer">🔖 saved</button>
+  </div>
+  <div id="playlist-items" style="flex:1;overflow-y:auto"></div>
+  <div id="playlist-saved-items" style="flex:1;overflow-y:auto;display:none"></div>
+  <div id="playlist-transport" style="display:none;padding:10px;border-top:1px solid rgba(200,137,42,.15);gap:8px;justify-content:center">
+    <button class="modal-close" onclick="playlistPrev()" style="margin:0;padding:6px 14px">⏮</button>
+    <button class="modal-close" onclick="playlistExit()" style="margin:0;padding:6px 14px">⏹ exit</button>
+    <button class="modal-close" onclick="playlistNext()" style="margin:0;padding:6px 14px">⏭</button>
+  </div>
+</div>
+
+<!-- v01.24: share picker — 📎 button in chat (global or DM) opens this -->
+<div id="share-picker-panel" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:300px;max-height:70vh;background:rgba(10,8,6,.98);border:1px solid rgba(200,137,42,.3);
+  border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,.7);z-index:120;display:flex;flex-direction:column;overflow:hidden">
+  <div style="padding:14px;border-bottom:1px solid rgba(200,137,42,.15);display:flex;justify-content:space-between;align-items:center">
+    <div class="modal-title" style="margin:0">📎 share</div>
+    <button onclick="closeSharePicker()" style="background:none;border:none;color:var(--amber);font-size:1.2rem;cursor:pointer">✕</button>
+  </div>
+  <div style="display:flex;border-bottom:1px solid rgba(200,137,42,.15)">
+    <button class="share-tab-btn active" data-tab="playlist" onclick="switchShareTab('playlist')" style="flex:1;background:none;border:none;padding:8px;color:var(--fog);font-size:.7rem;cursor:pointer">🎵 playlist</button>
+    <button class="share-tab-btn" data-tab="recs" onclick="switchShareTab('recs')" style="flex:1;background:none;border:none;padding:8px;color:var(--fog);font-size:.7rem;cursor:pointer">🎬 recs</button>
+    <button class="share-tab-btn" data-tab="posts" onclick="switchShareTab('posts')" style="flex:1;background:none;border:none;padding:8px;color:var(--fog);font-size:.7rem;cursor:pointer">🗼 posts</button>
+  </div>
+  <div id="share-tab-body" style="flex:1;overflow-y:auto"></div>
 </div>
 
 <!-- WIRELESS CALENDAR — book a recording slot -->
@@ -898,6 +969,7 @@
 
 <!-- Site scripts — core.js MUST load first, the rest can be in any order -->
 <script src="core.js"></script>
+<script src="accounts.js"></script>
 <script src="map-layout.js"></script>
 <script src="garden.js"></script>
 <script src="square.js"></script>
@@ -905,8 +977,11 @@
 <script src="keep.js"></script>
 <script src="wireless.js"></script>
 <script src="chat.js"></script>
+<script src="dm.js"></script>
 <script src="environment.js"></script>
 <script src="pixie.js"></script>
+<script src="playlist.js"></script>
+<script src="sharing.js"></script>
 
 </body>
 </html>

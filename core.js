@@ -8,6 +8,33 @@
 // ═══ VERSION HISTORY ═══
 const VERSION_HISTORY = [
   {
+    version: '01.24',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'NEW: real accounts — sign up with just a username, no password. This browser\'s saved key IS the account from then on; logging in on a different device/browser without that saved key isn\'t possible (no password to recover with — that trade-off is intentional, see account-auth.js header for the reasoning)',
+      'NEW: pick exactly one emoji as your profile "face" — shows up live next to your name to other people on the site as soon as you change it',
+      'Server-side account verification lives in new Netlify functions (account-auth.js for signup/login, account-update.js for changing your avatar/name/playlist, dm-send.js for sending a DM) — unlike almost everything else on this site, the nosirt_users and nosirt_dms collections are NOT writable directly from the browser, specifically so a stolen/guessed token can\'t rewrite someone\'s account or send a message pretending to be them',
+      'NEW: DMs are live — tap anyone\'s name in global chat (if they\'re signed into an account) for a "chat" popup, opens straight into a real thread inside the existing "personal" tab, with an inbox list and an unread badge on the tab itself. Reading is a live Firestore listener filtered to only YOUR OWN threads (participants array-contains query), not the whole collection',
+      'NEW: a personal playlist, saved per account — a "+" button next to any ambient track and any podcast episode saves it, opens from your profile as its own panel with reorder/remove and prev/exit/next transport controls. Playback reuses Pixie\'s own play-a-track/play-an-episode logic under the hood, so it behaves identically whether you start something or she does',
+      'NEW: sharing — a 📎 button in chat (global or DM) lets you share something from your playlist, the recs board, or an n/ forum post. The recipient gets a small card with a "save" button: a shared playlist item drops straight into their own playlist (ready to play), a shared rec or post bookmarks into a new "saved" tab on their playlist panel',
+      'v01.24 complete — all four pieces (accounts, DMs, playlist, sharing) are live'
+    ]
+  },
+  {
+    version: '01.23',
+    date: new Date().toLocaleDateString(),
+    changes: [
+      'FIX: Pixie went completely silent because Gemini 1.5 (the model the code was calling) was fully shut down by Google — switched to "gemini-flash-latest", a rolling alias Google repoints forward automatically so this can\'t silently die the same way again',
+      'FIX: replies were coming back as 1-2 words even with a raised token limit — turned out newer Gemini models spend part of that budget on invisible "thinking" tokens before ever writing a visible reply; explicitly set thinking to minimal so the budget actually goes to what she says',
+      'Rewrote her brevity rules: short is now the DEFAULT (one punchy sentence, greetings get a few words back) rather than something she drifts away from once she has room — she\'s allowed to loosen up only as the same conversation goes a few turns deep',
+      'NEW: she can now start ANY ambient track (not just lofi) and play a SPECIFIC episode of a SPECIFIC show by name — the live site context sent to her now includes every track key and every show\'s actual episode titles, and she\'s instructed to only ever use exact titles from that list',
+      'NEW: her site actions (play music, play an episode, stop, navigate) now fire immediately the moment she decides to do them, instead of waiting on a button tap to confirm it first',
+      'NEW: massively expanded fallback chain — from 2 Gemini keys to up to 10 keys across MULTIPLE providers (Gemini, Groq, Nvidia, Mistral, Cerebras, Lightning AI, OpenRouter). Provider is auto-detected from the env var name\'s prefix (e.g. MISTRAL_API_KEY_6) — add a new key from any of these and it\'s picked up automatically on next deploy, no code changes',
+      'Idle nudge timing (her "still there?" pop-ins while her panel is open) changed from 20s/60s test values to a real 10 minutes / 1 hour',
+      'NEW: a small persistent "🧚 Pixie" tab near the bottom of the screen opens her panel directly — no more needing to wait for her wandering icon to come back into view'
+    ]
+  },
+  {
     version: '01.21',
     date: new Date().toLocaleDateString(),
     changes: [
@@ -466,6 +493,46 @@ function fbListenCollection(collection, cb) {
     });
   } catch(e) {}
 }
+
+// v01.24: READ-ONLY lookup of another user's account doc (for showing
+// their display name/avatar in a DM thread, friend list, etc). This site
+// writes straight to Firestore client-side for almost everything else —
+// deliberately NOT for nosirt_users. All writes to that collection go
+// through account-auth.js / account-update.js (Netlify functions using
+// the Admin SDK), which check the account's token first. If Firestore
+// security rules for nosirt_users ever allow client writes, that
+// server-side check becomes pointless — keep that collection
+// write-locked to admin-SDK-only in the Firestore rules console.
+function fbGetUserDoc(username){
+  if(!db || !username) return Promise.resolve(null);
+  return db.collection('nosirt_users').doc(username).get()
+    .then(doc=>doc.exists?doc.data():null)
+    .catch(()=>null);
+}
+
+// v01.24: DMs — read-only listener, filtered to MY threads only via
+// array-contains on `participants`. Deliberately NOT a blanket listen
+// on the whole nosirt_dms collection (unlike this site's other
+// collections) — a DM is supposed to be private, so a browser should
+// only ever pull down messages it's actually part of. Sending goes
+// through dm-send.js (Admin SDK, token-checked) — this is read-only.
+let dmUnsub=null;
+function fbListenMyDms(myUsername, cb){
+  if(!db || !myUsername) return;
+  if(dmUnsub){ try{dmUnsub();}catch(e){} dmUnsub=null; }
+  try{
+    dmUnsub = db.collection('nosirt_dms')
+      .where('participants','array-contains',myUsername)
+      .onSnapshot(snap=>{
+        const items=[];
+        snap.forEach(doc=>items.push(doc.data()));
+        cb(items);
+      });
+  } catch(e){}
+}
+function fbStopListeningDms(){
+  if(dmUnsub){ try{dmUnsub();}catch(e){} dmUnsub=null; }
+}
 // Proper read-modify-write transaction against a single item's doc.
 // mutateFn receives the CURRENT server-side data for that item (not
 // whatever stale copy the caller had locally) and returns the updated
@@ -668,10 +735,23 @@ function sanitizeDisplayName(raw){
   return n||null;
 }
 function getDisplayLabel(){
+  // v01.24: a real account's name takes priority over the anonymous
+  // self-reported identity system — if you're logged in, that's who
+  // you are, full stop.
+  if(S.account && S.account.displayName){
+    return S.account.displayName;
+  }
   if(S.identity && S.identity.name){
     return S.identity.name + (S.identity.number!=null ? (' '+S.identity.number) : '');
   }
   return 'user('+getChatNum()+')';
+}
+
+// v01.24: the emoji "face" shown next to a message/presence entry, if
+// the sender is logged into an account. Anonymous visitors (no account)
+// simply don't have one — this returns null and callers render nothing.
+function getDisplayAvatar(){
+  return (S.account && S.account.avatarEmoji) ? S.account.avatarEmoji : null;
 }
 
 let identityUnsub=null;
@@ -937,6 +1017,14 @@ const S={
     number: localStorage.getItem('n_identity_number') ? Number(localStorage.getItem('n_identity_number')) : null,
     key: localStorage.getItem('n_identity_key')||null
   },
+  // v01.24: real signed-up account (username, no password — see
+  // accounts.js). Separate from the identity system above, which is
+  // just a self-reported chat name with no persistence beyond a name
+  // string. An account additionally unlocks DMs, a personal playlist,
+  // and a profile emoji "face" others can see live. null = logged out —
+  // everything else on the site (including the identity system above)
+  // works exactly the same as before with no account at all.
+  account: null,
   // Pixie's tiny bit of conversational memory — what she's currently
   // waiting on a reply for (e.g. 'name'). Cleared after each use.
   pixieAwaiting:null,

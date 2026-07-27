@@ -346,6 +346,14 @@ function waveLoop(){
 function startWave(){ if(waveRunning)return; waveRunning=true; waveLoop(); }
 function stopWave(){ waveRunning=false; drawWave(Date.now()/800); }
 
+// v01.24: resolves S.currentShowId to its title, for tagging a playlist
+// item with which show an episode belongs to (playlist items are stored
+// by title, not ID, so they're still meaningful if shows get reordered)
+function getCurrentShowTitle(){
+  const show = (S.shows||[]).find(s=>s.id===S.currentShowId);
+  return show ? show.title : '';
+}
+
 function renderEpisodes(){
   const q=($('wp-search')?$('wp-search').value:'').trim().toLowerCase();
   const full=(S.episodes||[]);
@@ -371,6 +379,7 @@ function renderEpisodes(){
         ${ep.desc?`<div class="wp-ep-desc">${esc(ep.desc)}</div>`:''}
         ${pct>0?`<div class="wp-ep-progress"><div class="wp-ep-progress-fill" style="width:${pct}%"></div></div>`:''}
       </div>
+      ${!S.selectMode?`<button class="playlist-add-btn" style="margin-left:6px" onclick="event.stopPropagation();addToPlaylist({type:'episode',showTitle:${JSON.stringify(getCurrentShowTitle())},episodeTitle:${JSON.stringify(ep.title)}})" title="save to your playlist">+</button>`:''}
       <div class="wp-ep-admin ${S.adminUnlocked&&!S.selectMode?'show':''}">
         <button class="wp-ep-btn" onclick="moveEpisode(event,'${ep.id}',-1)" title="move up" ${globalIdx<=0?'disabled':''}>↑</button>
         <button class="wp-ep-btn" onclick="moveEpisode(event,'${ep.id}',1)" title="move down" ${globalIdx>=full.length-1?'disabled':''}>↓</button>
