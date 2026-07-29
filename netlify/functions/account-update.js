@@ -111,6 +111,85 @@ exports.handler = async function (event) {
       return { statusCode: 200, body: JSON.stringify({ ok: true, savedItems }) };
     }
 
+    // v01.26: user-owned show management
+    // Shows are stored in nosirt_shows with owner=username and
+    // isPublic flag. Only the owner can edit/delete their own shows.
+    if (action === 'saveUserShow') {
+      const show = body.show;
+      if (!show || !show.id || !show.title) {
+        return { statusCode: 200, body: JSON.stringify({ ok: false, error: 'Invalid show data.' }) };
+      }
+      const showRef = db.collection('nosirt_shows').doc(show.id);
+      const existing = await showRef.get();
+      // Only allow if new or owner matches
+      if (existing.exists && existing.data().owner !== username) {
+        return { statusCode: 200, body: JSON.stringify({ ok: false, error: 'Not your show.' }) };
+      }
+      const data = {
+        ...show,
+        owner: username,
+        isPublic: !!show.isPublic,
+        updatedAt: Date.now()
+      };
+      await showRef.set(data, { merge: false });
+      return { statusCode: 200, body: JSON.stringify({ ok: true }) };
+    }
+
+    if (action === 'deleteUserShow') {
+      const { showId } = body;
+      if (!showId) return { statusCode: 200, body: JSON.stringify({ ok: false, error: 'Missing showId.' }) };
+      const showRef = db.collection('nosirt_shows').doc(showId);
+      const existing = await showRef.get();
+      if (!existing.exists || existing.data().owner !== username) {
+        return { statusCode: 200, body: JSON.stringify({ ok: false, error: 'Not your show.' }) };
+      }
+      await showRef.delete();
+      // Also delete all episodes for this show
+      const eps = await db.collection('nosirt_episodes').where('showId', '==', showId).get();
+      const batch = db.batch();
+      eps.forEach(doc => batch.delete(doc.ref));
+      await batch.commit();
+      return { statusCode: 200, body: JSON.stringify({ ok: true }) };
+    }
+
+    if (action === 'toggleShowPublic') {
+      const { showId, isPublic } = body;
+      if (!showId) return { statusCode: 200, body: JSON.stringify({ ok: false, error: 'Missing showId.' }) };
+      const showRef = db.collection('nosirt_shows').doc(showId);
+      const existing = await showRef.get();
+      if (!existing.exists || existing.data().owner !== username) {
+        return { statusCode: 200, body: JSON.stringify({ ok: false, error: 'Not your show.' }) };
+      }
+      await showRef.update({ isPublic: !!isPublic });
+      return { statusCode: 200, body: JSON.stringify({ ok: true, isPublic: !!isPublic }) };
+    }
+
+    if (action === 'saveUserEpisode') {
+      const ep = body.episode;
+      if (!ep || !ep.id || !ep.showId) {
+        return { statusCode: 200, body: JSON.stringify({ ok: false, error: 'Invalid episode data.' }) };
+      }
+      // Verify user owns the show
+      const showRef = db.collection('nosirt_shows').doc(ep.showId);
+      const show = await showRef.get();
+      if (!show.exists || show.data().owner !== username) {
+        return { statusCode: 200, body: JSON.stringify({ ok: false, error: 'Not your show.' }) };
+      }
+      await db.collection('nosirt_episodes').doc(ep.id).set({ ...ep, owner: username }, { merge: false });
+      return { statusCode: 200, body: JSON.stringify({ ok: true }) };
+    }
+
+    if (action === 'deleteUserEpisode') {
+      const { episodeId, showId } = body;
+      const showRef = db.collection('nosirt_shows').doc(showId);
+      const show = await showRef.get();
+      if (!show.exists || show.data().owner !== username) {
+        return { statusCode: 200, body: JSON.stringify({ ok: false, error: 'Not your show.' }) };
+      }
+      await db.collection('nosirt_episodes').doc(episodeId).delete();
+      return { statusCode: 200, body: JSON.stringify({ ok: true }) };
+    }
+
     return { statusCode: 200, body: JSON.stringify({ ok: false, error: 'Unknown action' }) };
   } catch (err) {
     console.error('account-update error:', err.message);
