@@ -42,7 +42,10 @@ function openCastle(){
     // Skip the gate entirely — go straight to the interior
     $('castle-door').classList.remove('open');
     $('castle-interior').classList.add('open');
-    setTimeout(renderBookList, 50);
+    setTimeout(()=>{
+      initKeepTabs();
+      renderBookList();
+    }, 50);
     return;
   }
   $('castle-door').classList.add('open');
@@ -59,7 +62,7 @@ async function tryCastle(){
   if(ok){
     $('castle-door').classList.remove('open');$('castle-input').value='';$('castle-wrong').textContent='';
     $('castle-interior').classList.add('open');
-    setTimeout(renderBookList,50);
+    setTimeout(()=>{ initKeepTabs(); renderBookList(); },50);
   }else{
     $('castle-input').classList.add('wrong');$('castle-wrong').textContent='the gate remains sealed.';
     setTimeout(()=>$('castle-input').classList.remove('wrong'),420);$('castle-input').value='';
@@ -89,6 +92,53 @@ if(typeof pdfjsLib!=='undefined'){
 let currentShelf = 'novels';
 let currentBook = null;
 let currentChapterIdx = 0;
+let keepView = 'browse'; // 'browse' = public library, 'mine' = my works folder
+
+// v01.26: switch between the public library and the user's private works folder
+function switchKeepView(view){
+  keepView = view;
+  // Tab highlight
+  const browseTab = $('keep-tab-browse');
+  const mineTab   = $('keep-tab-mine');
+  if(browseTab){
+    browseTab.style.background    = view==='browse' ? 'rgba(200,137,42,.12)' : 'none';
+    browseTab.style.borderBottom  = view==='browse' ? '2px solid var(--amber)' : '2px solid transparent';
+    browseTab.style.color         = view==='browse' ? 'var(--cream)' : 'var(--fog)';
+  }
+  if(mineTab){
+    mineTab.style.background   = view==='mine' ? 'rgba(200,137,42,.12)' : 'none';
+    mineTab.style.borderBottom = view==='mine' ? '2px solid var(--amber)' : '2px solid transparent';
+    mineTab.style.color        = view==='mine' ? 'var(--cream)' : 'var(--fog)';
+  }
+  // Show/hide shelf row (only relevant in browse mode)
+  const shelfRow = $('keep-shelf-row');
+  if(shelfRow) shelfRow.style.display = view==='browse' ? 'flex' : 'none';
+  // Search placeholder
+  const search = $('lib-search');
+  if(search) search.placeholder = view==='mine'
+    ? 'search your works...'
+    : 'search title, author, or genre...';
+  // Add button always visible when user owns the keep
+  updateKeepAddBtn();
+  renderBookList();
+}
+
+function updateKeepAddBtn(){
+  const btn = $('lib-add-btn');
+  if(!btn) return;
+  // Show "add" whenever user has access to the keep (account or admin)
+  btn.style.display = keepHasAccess() ? 'inline-flex' : 'none';
+}
+
+// Called every time the interior opens — shows/hides tabs based on auth state
+function initKeepTabs(){
+  keepView = 'browse'; // always start on browse when opening
+  const mineTab = $('keep-tab-mine');
+  // "My works" tab only shown to logged-in users and admin
+  if(mineTab) mineTab.style.display = keepHasAccess() ? 'block' : 'none';
+  updateKeepAddBtn();
+  switchKeepView('browse');
+}
 
 function switchShelf(shelf) {
   currentShelf = shelf;
@@ -128,63 +178,182 @@ function isMyStory(b){
   return false;
 }
 
+// Build a single story card HTML string — used by both view modes
+function buildStoryCard(b, opts){
+  opts = opts || {};
+  const mine = isMyStory(b);
+  const q = opts.q || '';
+
+  // Privacy badge / author credit
+  const privacyTag = mine
+    ? (b.isPublic
+        ? '<span style="font-size:.6rem;color:#8fc97a;opacity:.85">🌿 public</span>'
+        : '<span style="font-size:.6rem;color:var(--amber);opacity:.65">🔒 private</span>')
+    : '<span style="font-size:.6rem;color:var(--fog);opacity:.5">by ' + esc(b.owner||b.author) + '</span>';
+
+  const shelfBadge = q
+    ? '<div style="font-size:.65rem;color:var(--fog);opacity:.6">' + (SHELF_ICON[b.shelf]||'') + ' ' + esc(b.shelf) + '</div>'
+    : '';
+
+  const dateLine = b.uploadedAt
+    ? '<span style="opacity:.45;font-size:.65rem;margin-left:6px">' + new Date(b.uploadedAt).toLocaleDateString('en-US',{month:'short',year:'numeric'}) + '</span>'
+    : '';
+
+  // Action buttons — always show share-to-chat; show privacy toggle + edit/delete only to owner
+  // Use data-action attributes to avoid onclick string-quoting nightmares
+  const sid = b.id;
+  const shareBtn = (S.account||S.adminUnlocked)
+    ? '<button class="admin-btn edit" data-action="share-chat" data-id="'+sid+'" style="font-size:.62rem;background:rgba(200,137,42,.06)">📎 share</button>'
+    : '';
+  const toggleBtn = mine && !b.isPublic
+    ? '<button class="admin-btn edit" data-action="make-public" data-id="'+sid+'" style="font-size:.62rem">🌿 share to keep</button>'
+    : (mine && b.isPublic
+        ? '<button class="admin-btn edit" data-action="make-private" data-id="'+sid+'" style="font-size:.62rem">🔒 make private</button>'
+        : '');
+  // (duplicate toggleBtn removed)
+  const ownerBtns = mine
+    ? '<button class="admin-btn edit" data-action="edit" data-id="'+sid+'">✎ edit</button>' +
+      '<button class="admin-btn delete" data-action="delete" data-id="'+sid+'">✕ delete</button>'
+    : '';
+
+  return (
+    '<div data-action="open-book" data-id="'+sid+'" style="background:rgba(20,14,8,.7);border:1px solid rgba(200,137,42,.18);border-radius:12px;padding:14px 16px;cursor:pointer;transition:border-color .2s" ' +
+    'onmouseover="this.style.borderColor=\'rgba(200,137,42,.4)\'" onmouseout="this.style.borderColor=\'rgba(200,137,42,.18)\'">' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">' +
+        '<div style="font-family:var(--font-title,serif);font-size:.88rem;color:var(--cream);margin-bottom:4px;line-height:1.4">' + esc(b.title) + '</div>' +
+        '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0">' + shelfBadge + privacyTag + '</div>' +
+      '</div>' +
+      '<div style="font-family:var(--font-body,serif);font-style:italic;font-size:.72rem;color:var(--amber);opacity:.8;margin-bottom:6px">' +
+        'by <span data-action="filter-library" data-value="'+esc(b.author).replace(/'/g,"&#39;")+'" style="text-decoration:underline;cursor:pointer">' + esc(b.author) + '</span>' +
+        ' · <span data-action="filter-library" data-value="'+esc(b.genreCanonical).replace(/'/g,"&#39;")+'" style="text-decoration:underline;cursor:pointer">' + esc(b.genreRaw||b.genreCanonical) + '</span>' +
+        (b.status==='ongoing' ? ' · <span style="color:#8fc97a">ongoing</span>' : '') +
+        dateLine +
+      '</div>' +
+      (b.desc ? '<div style="font-family:var(--font-body,serif);font-style:italic;font-size:.78rem;color:var(--fog);line-height:1.6;margin-bottom:8px">' + esc(b.desc) + '</div>' : '') +
+      '<div style="margin-top:6px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">' +
+        '<div style="font-size:.68rem;color:var(--fog);opacity:.5">' + b.chapters.length + ' chapter' + (b.chapters.length!==1?'s':'') + '</div>' +
+        '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' + shareBtn + toggleBtn + ownerBtns + '</div>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
 function renderBookList() {
   const list = $('book-list');
   if (!list) return;
-  const q=($('lib-search')?$('lib-search').value:'').trim().toLowerCase();
-  let books = S.library.filter(canSeeStory);
-  if(q){
-    books=books.filter(b=>
-      b.title.toLowerCase().includes(q)||
-      (b.author||'').toLowerCase().includes(q)||
-      (b.genreRaw||'').toLowerCase().includes(q)||
-      (b.genreCanonical||'').toLowerCase().includes(q)
+  const q = ($('lib-search') ? $('lib-search').value : '').trim().toLowerCase();
+
+  // ── MY WORKS view ─────────────────────────────────────────
+  if(keepView === 'mine'){
+    let myBooks = S.library.filter(b => isMyStory(b));
+    if(q) myBooks = myBooks.filter(b =>
+      b.title.toLowerCase().includes(q) ||
+      (b.desc||'').toLowerCase().includes(q) ||
+      (b.genreRaw||'').toLowerCase().includes(q)
     );
-  }else{
-    books=books.filter(b=>b.shelf===currentShelf);
-  }
-  if (!books.length) {
-    list.innerHTML = `<div style="font-family:'IM Fell English',serif;font-style:italic;font-size:.88rem;color:var(--fog);text-align:center;padding:40px 20px;opacity:.5;line-height:1.7">
-      ${q?'nothing matches that search.':'the shelves are empty here.<br>add your first story above.'}
-    </div>`;
+
+    if(!myBooks.length){
+      list.innerHTML = '<div style="font-family:var(--font-body,serif);font-style:italic;font-size:.88rem;color:var(--fog);text-align:center;padding:40px 20px;opacity:.5;line-height:1.7">' +
+        (q ? 'nothing matches that search.' : 'you have not added any stories yet. hit + add to upload your first.') +
+        '</div>';
+      return;
+    }
+
+    // Group by privacy status — private first (personal), then public
+    const privateBooks = myBooks.filter(b => !b.isPublic);
+    const publicBooks  = myBooks.filter(b =>  b.isPublic);
+
+    let html = '';
+    if(privateBooks.length){
+      html += '<div style="font-size:.65rem;color:var(--fog);opacity:.5;font-family:var(--font-body,serif);font-style:italic;padding:8px 0 4px;border-bottom:1px solid rgba(200,137,42,.08);margin-bottom:10px">private — only you</div>';
+      html += privateBooks.map(b => buildStoryCard(b, {q})).join('');
+    }
+    if(publicBooks.length){
+      html += '<div style="font-size:.65rem;color:#8fc97a;opacity:.7;font-family:var(--font-body,serif);font-style:italic;padding:' + (privateBooks.length?'16px':'8px') + ' 0 4px;border-bottom:1px solid rgba(200,137,42,.08);margin-bottom:10px">shared to the keep</div>';
+      html += publicBooks.map(b => buildStoryCard(b, {q})).join('');
+    }
+    list.innerHTML = html;
     return;
   }
-  list.innerHTML = books.map(b => {
-    const mine = isMyStory(b);
-    const privacyTag = mine
-      ? (b.isPublic
-          ? `<span style="font-size:.6rem;color:#8fc97a;opacity:.8" title="visible to everyone">🌿 public</span>`
-          : `<span style="font-size:.6rem;color:var(--amber);opacity:.6" title="only you can see this">🔒 private</span>`)
-      : `<span style="font-size:.6rem;color:var(--fog);opacity:.5">${esc(b.owner||b.author)}</span>`;
-    return `
-    <div onclick="openBook('${b.id}')" style="background:rgba(20,14,8,.7);border:1px solid rgba(200,137,42,.18);border-radius:12px;padding:14px 16px;cursor:pointer;transition:border-color .2s"
-      onmouseover="this.style.borderColor='rgba(200,137,42,.4)'" onmouseout="this.style.borderColor='rgba(200,137,42,.18)'">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
-        <div style="font-family:'Cinzel Decorative',serif;font-size:.88rem;color:var(--cream);margin-bottom:4px;line-height:1.4">${esc(b.title)}</div>
-        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
-          ${q?`<div style="font-size:.65rem;color:var(--fog);opacity:.6">${SHELF_ICON[b.shelf]||''} ${esc(b.shelf)}</div>`:''}
-          ${privacyTag}
-        </div>
-      </div>
-      <div style="font-family:'IM Fell English',serif;font-style:italic;font-size:.72rem;color:var(--amber);opacity:.8;margin-bottom:8px">
-        by <span onclick="event.stopPropagation();filterLibrary('${esc(b.author).replace(/'/g,"\'")}')" style="text-decoration:underline;cursor:pointer">${esc(b.author)}</span>
-        · <span onclick="event.stopPropagation();filterLibrary('${esc(b.genreCanonical).replace(/'/g,"\'")}')" style="text-decoration:underline;cursor:pointer">${esc(b.genreRaw||b.genreCanonical)}</span>
-        ${b.status==='ongoing'?' · <span style="color:#8fc97a">ongoing</span>':''}
-      </div>
-      ${b.desc?`<div style="font-family:'IM Fell English',serif;font-style:italic;font-size:.78rem;color:var(--fog);line-height:1.6">${esc(b.desc)}</div>`:''}
-      <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
-        <div style="font-size:.68rem;color:var(--fog);opacity:.5">${b.chapters.length} chapter${b.chapters.length!==1?'s':''}</div>
-        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-          ${mine && !b.isPublic ? `<button class="admin-btn edit" onclick="event.stopPropagation();shareStoryPublic('${b.id}')" style="background:rgba(200,137,42,.08);font-size:.62rem">🌿 share to keep</button>` : ''}
-          ${mine && b.isPublic ? `<button class="admin-btn edit" onclick="event.stopPropagation();unshareStory('${b.id}')" style="font-size:.62rem">🔒 make private</button>` : ''}
-          <div class="lib-admin ${mine?'show':''}">
-            <button class="admin-btn edit" onclick="event.stopPropagation();editStory('${b.id}')">✎ edit</button>
-            <button class="admin-btn delete" onclick="event.stopPropagation();deleteStory('${b.id}')">✕ delete</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  `}).join('');
+
+  // ── BROWSE view (public Wattpad-style) ────────────────────
+  let books = S.library.filter(b => b.isPublic || S.adminUnlocked);
+  if(q){
+    books = books.filter(b =>
+      b.title.toLowerCase().includes(q) ||
+      (b.author||'').toLowerCase().includes(q) ||
+      (b.genreRaw||'').toLowerCase().includes(q) ||
+      (b.genreCanonical||'').toLowerCase().includes(q)
+    );
+  } else {
+    books = books.filter(b => b.shelf === currentShelf);
+  }
+
+  if(!books.length){
+    list.innerHTML = '<div style="font-family:var(--font-body,serif);font-style:italic;font-size:.88rem;color:var(--fog);text-align:center;padding:40px 20px;opacity:.5;line-height:1.7">' +
+      (q ? 'nothing matches that search.' : 'no stories on this shelf yet.') +
+      '</div>';
+    return;
+  }
+  list.innerHTML = books.map(b => buildStoryCard(b, {q})).join('');
+}
+
+// Delegated click handler for book-list card buttons (data-action pattern)
+// This avoids the string-quoting nightmare of inline onclick with dynamic IDs.
+document.addEventListener('click', function(e){
+  const btn = e.target.closest('[data-action]');
+  if(!btn) return;
+  const action = btn.getAttribute('data-action');
+  const id = btn.getAttribute('data-id');
+  if(!action) return;
+  e.stopPropagation();
+  switch(action){
+    case 'share-chat':     shareStoryToChat(id);  break;
+    case 'make-public':    shareStoryPublic(id);  break;
+    case 'make-private':   unshareStory(id);      break;
+    case 'edit':           editStory(id);         break;
+    case 'delete':         deleteStory(id);       break;
+    // Reader view actions (reload the reader after state change)
+    case 'reader-make-public':
+      shareStoryPublic(id);
+      setTimeout(()=>openBook(id), 200);
+      break;
+    case 'reader-make-private':
+      unshareStory(id);
+      setTimeout(()=>openBook(id), 200);
+      break;
+    case 'reader-share-chat':
+      shareStoryToChat(id);
+      break;
+    case 'open-book':
+      openBook(id);
+      break;
+    case 'filter-library':{
+      const val = e.target.getAttribute('data-value');
+      if(val) filterLibrary(val);
+      break;
+    }
+  }
+});
+
+// Share a story as a card into global chat
+function shareStoryToChat(id){
+  if(!S.account && !S.adminUnlocked){ toast('sign in to share'); return; }
+  const book = S.library.find(b=>b.id===id);
+  if(!book){ toast('story not found'); return; }
+  const card = {
+    type: 'story',
+    storyId: book.id,
+    title: book.title,
+    author: book.author,
+    genre: book.genreRaw||book.genreCanonical,
+    desc: book.desc||'',
+    chapterCount: book.chapters.length,
+    sharedBy: S.account ? S.account.username : 'nosirt',
+    sharedAt: Date.now()
+  };
+  if(typeof sendSharedCardToChat==='function') sendSharedCardToChat(card);
+  else toast('share sent ✓');
 }
 
 // Make a story public (share to keep) or private
@@ -194,7 +363,7 @@ function shareStoryPublic(id){
   book.isPublic = true;
   fbSaveStory(book.id, book);
   renderBookList();
-  toast('story shared to the keep ✓');
+  toast('story shared to the keep 🌿');
 }
 function unshareStory(id){
   const book = S.library.find(b=>b.id===id);
@@ -202,7 +371,7 @@ function unshareStory(id){
   book.isPublic = false;
   fbSaveStory(book.id, book);
   renderBookList();
-  toast('story set to private');
+  toast('story set to private 🔒');
 }
 
 function openBook(id) {
@@ -211,8 +380,23 @@ function openBook(id) {
   currentBook = book;
   currentChapterIdx = 0;
   $('reader-title').textContent = book.title;
-  $('reader-meta').innerHTML = `by ${esc(book.author)} · ${esc(book.genreRaw||book.genreCanonical)}${book.status==='ongoing'?' · <span style="color:#8fc97a">ongoing</span>':''}`;
-  $('reader-add-ch-btn').style.display = book.status==='ongoing' ? 'block' : 'none';
+  // Reader meta: author + genre + date + owner actions
+  const mine = isMyStory(book);
+  const bid = book.id;
+  const privacyToggle = mine
+    ? (book.isPublic
+        ? '<button data-action="reader-make-private" data-id="'+bid+'" style="background:none;border:1px solid rgba(200,137,42,.25);border-radius:10px;padding:2px 8px;color:var(--fog);font-size:.62rem;cursor:pointer;margin-left:8px">🔒 make private</button>'
+        : '<button data-action="reader-make-public" data-id="'+bid+'" style="background:none;border:1px solid rgba(200,137,42,.25);border-radius:10px;padding:2px 8px;color:var(--fog);font-size:.62rem;cursor:pointer;margin-left:8px">🌿 share to keep</button>')
+    : '';
+  const readerShareBtn = (S.account||S.adminUnlocked)
+    ? '<button data-action="reader-share-chat" data-id="'+bid+'" style="background:none;border:1px solid rgba(200,137,42,.25);border-radius:10px;padding:2px 8px;color:var(--fog);font-size:.62rem;cursor:pointer;margin-left:6px">📎 share to chat</button>'
+    : '';
+  // readerShareBtn is used instead (data-action pattern)
+  $('reader-meta').innerHTML =
+    'by ' + esc(book.author) + ' · ' + esc(book.genreRaw||book.genreCanonical) +
+    (book.status==='ongoing' ? ' · <span style="color:#8fc97a">ongoing</span>' : '') +
+    privacyToggle + readerShareBtn;
+  $('reader-add-ch-btn').style.display = (mine && book.status==='ongoing') ? 'block' : 'none';
   $('lib-add-chapter-panel').style.display='none';
   buildChapterNav(book);
   renderChapter(0);
@@ -222,7 +406,7 @@ function openBook(id) {
 
 function buildChapterNav(book) {
   $('chapter-list').innerHTML = book.chapters.map((ch, i) => `
-    <div onclick="goToChapter(${i});toggleChapterNav()" style="padding:6px 8px;border-radius:6px;cursor:pointer;font-family:'IM Fell English',serif;font-style:italic;font-size:.78rem;color:var(--fog);transition:all .15s;border:1px solid transparent"
+    <div onclick="goToChapter(${i});toggleChapterNav()" style="padding:6px 8px;border-radius:6px;cursor:pointer;font-family:var(--font-body,serif);font-style:italic;font-size:.78rem;color:var(--fog);transition:all .15s;border:1px solid transparent"
       onmouseover="this.style.color='var(--cream)';this.style.borderColor='rgba(200,137,42,.2)'"
       onmouseout="this.style.color='var(--fog)';this.style.borderColor='transparent'"
       id="ch-nav-${i}">${i === 0 ? '❧' : '·'} ${esc(ch.title)}
@@ -251,18 +435,18 @@ function renderChapter(idx) {
   }).join('');
 
   $('reader-content').innerHTML = `
-    <div style="font-family:'Cinzel Decorative',serif;font-size:1rem;color:var(--amber);margin-bottom:6px;line-height:1.4">${esc(ch.title)}</div>
+    <div style="font-family:var(--font-title,serif);font-size:1rem;color:var(--amber);margin-bottom:6px;line-height:1.4">${esc(ch.title)}</div>
     <div style="width:40px;height:1px;background:rgba(200,137,42,.3);margin-bottom:20px"></div>
     <div style="font-family:'Crimson Text',serif;font-size:1.05rem;color:rgba(230,220,200,.88);line-height:1.85">${html}</div>
     ${idx < currentBook.chapters.length - 1 ? `
     <div style="margin-top:32px;text-align:center">
-      <button onclick="goToChapter(${idx+1})" style="background:rgba(200,137,42,.1);border:1px solid rgba(200,137,42,.3);border-radius:20px;padding:8px 24px;color:var(--cream);font-family:'IM Fell English',serif;font-style:italic;font-size:.85rem;cursor:pointer">
+      <button onclick="goToChapter(${idx+1})" style="background:rgba(200,137,42,.1);border:1px solid rgba(200,137,42,.3);border-radius:20px;padding:8px 24px;color:var(--cream);font-family:var(--font-body,serif);font-style:italic;font-size:.85rem;cursor:pointer">
         next: ${esc(currentBook.chapters[idx+1].title)} →
       </button>
     </div>` : `
-    <div style="margin-top:32px;text-align:center;font-family:'IM Fell English',serif;font-style:italic;font-size:.85rem;color:var(--fog);opacity:.6">— end ${currentBook.status==='ongoing'?"of what's posted so far":''} —</div>
+    <div style="margin-top:32px;text-align:center;font-family:var(--font-body,serif);font-style:italic;font-size:.85rem;color:var(--fog);opacity:.6">— end ${currentBook.status==='ongoing'?"of what's posted so far":''} —</div>
     <div style="margin-top:12px;text-align:center">
-      <button onclick="closeReader()" style="background:transparent;border:1px solid rgba(200,137,42,.2);border-radius:20px;padding:6px 18px;color:var(--fog);font-family:'IM Fell English',serif;font-style:italic;font-size:.8rem;cursor:pointer">return to library</button>
+      <button onclick="closeReader()" style="background:transparent;border:1px solid rgba(200,137,42,.2);border-radius:20px;padding:6px 18px;color:var(--fog);font-family:var(--font-body,serif);font-style:italic;font-size:.8rem;cursor:pointer">return to library</button>
     </div>`}
   `;
   $('reader-content').scrollTop = 0;
@@ -386,8 +570,12 @@ async function chaptersFromFile(file){
 
 // ═══ UPLOAD: NEW STORY ═══
 function toggleAddStory(){
+  if(!keepHasAccess()){ toast('sign in to add stories'); return; }
   const panel=$('lib-add-panel');
   panel.style.display=panel.style.display==='none'?'block':'none';
+  // When opening the add panel, switch to "my works" view so the
+  // new story appears there immediately after publishing
+  if(panel.style.display==='block' && keepView==='browse') switchKeepView('mine');
 }
 
 async function publishStory(){
@@ -434,8 +622,10 @@ async function publishStory(){
 
   $('lib-title').value='';$('lib-author').value='';$('lib-genre').value='';
   $('lib-desc').value='';$('lib-paste').value='';$('lib-file').value='';
-  toggleAddStory();
-  renderBookList();
+  const addPanel=$('lib-add-panel');
+  if(addPanel) addPanel.style.display='none';
+  // Always land on "my works" after publishing so the user sees their new story
+  switchKeepView('mine');
   toast('published to the keep ✓ ('+chapters.length+' chapter'+(chapters.length!==1?'s':'')+')');
 }
 

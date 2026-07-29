@@ -266,7 +266,9 @@
     <div id="wp-home">
       <div class="wp-toolbar">
         <input class="sq-input" id="wp-home-search" placeholder="search shows..." oninput="renderShowGrid()" style="flex:1">
-        <button class="wp-add-toggle show-admin" onclick="openShowForm(null)">+ new show</button>
+        <!-- v01.26: admin sees "new show", logged-in users see "my playlist +" -->
+        <button class="wp-add-toggle show-admin" onclick="openShowForm(null)" style="display:none" id="btn-new-show-admin">+ new show</button>
+        <button class="wp-add-toggle" id="btn-new-show-user" style="display:none" onclick="openUserShowForm()">+ new playlist</button>
       </div>
       <div class="wcal-trigger" onclick="openCalendarModal()" style="margin-bottom:16px" title="book a recording slot">
         <span class="wcal-trigger-dot"></span> book a slot
@@ -291,9 +293,8 @@
         <button class="wp-mini-edit show-admin" id="wp-show-desc-edit-btn" onclick="startShowDescriptionEdit()">✎ edit description</button>
       </div>
 
-      <div class="wp-show-admin-row">
-        <button class="wcal-mini-btn show-admin" onclick="openShowForm(currentShowIdSafe())">✎ edit show</button>
-        <button class="wcal-mini-btn danger show-admin" onclick="confirmDeleteShow()">🗑 delete show</button>
+      <div class="wp-show-admin-row" id="wp-show-admin-row" style="display:none">
+        <!-- rendered dynamically by renderShowBanner() based on ownership -->
       </div>
 
       <div class="wp-header-controls">
@@ -559,18 +560,25 @@
       </div>
     </div>
 
-    <!-- Admin login section -->
+    <!-- Admin login section — collapsed under a disclosure so regular users don't see two login areas -->
     <div style="border-top:1px solid rgba(200,137,42,.15);padding-top:12px">
-      <div id="admin-login-form-profile" style="display:flex;flex-direction:column;gap:8px">
-        <input type="text" id="admin-username-profile" class="sq-input" placeholder="username" style="margin:0;font-size:.75rem;padding:6px 8px;height:28px">
-        <input type="password" id="admin-password-profile" class="sq-input" placeholder="password" style="margin:0;font-size:.75rem;padding:6px 8px;height:28px">
-        <button class="sq-submit" onclick="handleAdminLoginProfile()" style="font-size:.75rem;padding:6px">unlock</button>
-        <div id="admin-login-error-profile" style="font-size:.65rem;color:#c85a5a;font-family:'IM Fell English',serif;font-style:italic"></div>
-      </div>
-      <div id="admin-unlocked-view-profile" style="display:none;text-align:center">
-        <div style="font-size:.75rem;color:var(--amber);margin-bottom:10px;font-family:'Cinzel Decorative',serif">🔓 admin unlocked</div>
-        <button class="sq-submit" onclick="openAdminSettingsPanel()" style="width:100%;font-size:.75rem;margin-bottom:8px">⚙ open admin settings</button>
-        <button class="sq-submit" onclick="handleAdminLogoutProfile()" style="width:100%;font-size:.75rem">lock</button>
+      <!-- Hidden by default; revealed only when admin toggle is clicked -->
+      <button id="admin-toggle-btn" onclick="toggleAdminSection()"
+        style="background:none;border:none;color:var(--fog);font-size:.62rem;font-family:'IM Fell English',serif;font-style:italic;opacity:.4;cursor:pointer;padding:0;display:block;margin:0 auto">
+        admin ▾
+      </button>
+      <div id="admin-section-body" style="display:none;margin-top:10px">
+        <div id="admin-login-form-profile" style="display:flex;flex-direction:column;gap:8px">
+          <input type="text" id="admin-username-profile" class="sq-input" placeholder="username" style="margin:0;font-size:.75rem;padding:6px 8px;height:28px">
+          <input type="password" id="admin-password-profile" class="sq-input" placeholder="password" style="margin:0;font-size:.75rem;padding:6px 8px;height:28px">
+          <button class="sq-submit" onclick="handleAdminLoginProfile()" style="font-size:.75rem;padding:6px">unlock</button>
+          <div id="admin-login-error-profile" style="font-size:.65rem;color:#c85a5a;font-family:'IM Fell English',serif;font-style:italic"></div>
+        </div>
+        <div id="admin-unlocked-view-profile" style="display:none;text-align:center">
+          <div style="font-size:.75rem;color:var(--amber);margin-bottom:10px;font-family:'Cinzel Decorative',serif">🔓 admin unlocked</div>
+          <button class="sq-submit" onclick="openAdminSettingsPanel()" style="width:100%;font-size:.75rem;margin-bottom:8px">⚙ open admin settings</button>
+          <button class="sq-submit" onclick="handleAdminLogoutProfile()" style="width:100%;font-size:.75rem">lock</button>
+        </div>
       </div>
     </div>
   </div>
@@ -714,8 +722,19 @@
       </div>
       <button onclick="closeInterior()" style="background:transparent;border:1px solid rgba(200,137,42,.2);border-radius:16px;padding:5px 12px;color:var(--fog);font-family:'IM Fell English',serif;font-style:italic;font-size:.75rem;cursor:pointer">leave ✕</button>
     </div>
-    <!-- Shelf tabs -->
-    <div style="display:flex;gap:6px;padding:10px 18px 8px;overflow-x:auto;scrollbar-width:none;flex-shrink:0;border-bottom:1px solid rgba(200,137,42,.1)">
+    <!-- v01.26: keep view mode — "browse" (public library) vs "my works" (private folder) -->
+    <div style="display:flex;border-bottom:1px solid rgba(200,137,42,.12);flex-shrink:0">
+      <button id="keep-tab-browse" onclick="switchKeepView('browse')"
+        style="flex:1;background:rgba(200,137,42,.12);border:none;border-bottom:2px solid var(--amber);padding:8px;color:var(--cream);font-family:'IM Fell English',serif;font-style:italic;font-size:.78rem;cursor:pointer">
+        📚 browse
+      </button>
+      <button id="keep-tab-mine" onclick="switchKeepView('mine')"
+        style="flex:1;background:none;border:none;border-bottom:2px solid transparent;padding:8px;color:var(--fog);font-family:'IM Fell English',serif;font-style:italic;font-size:.78rem;cursor:pointer;display:none">
+        🔒 my works
+      </button>
+    </div>
+    <!-- Shelf tabs (shown in browse mode only) -->
+    <div id="keep-shelf-row" style="display:flex;gap:6px;padding:10px 18px 8px;overflow-x:auto;scrollbar-width:none;flex-shrink:0;border-bottom:1px solid rgba(200,137,42,.1)">
       <div class="shelf-tab active" onclick="switchShelf('novels')" style="flex-shrink:0;padding:5px 12px;border-radius:16px;border:1px solid rgba(200,137,42,.35);background:rgba(200,137,42,.15);color:var(--cream);font-family:'IM Fell English',serif;font-style:italic;font-size:.75rem;cursor:pointer;white-space:nowrap">📖 novels</div>
       <div class="shelf-tab" onclick="switchShelf('stories')" style="flex-shrink:0;padding:5px 12px;border-radius:16px;border:1px solid rgba(200,137,42,.2);background:transparent;color:var(--fog);font-family:'IM Fell English',serif;font-style:italic;font-size:.75rem;cursor:pointer;white-space:nowrap">📜 stories</div>
       <div class="shelf-tab" onclick="switchShelf('poetry')" style="flex-shrink:0;padding:5px 12px;border-radius:16px;border:1px solid rgba(200,137,42,.2);background:transparent;color:var(--fog);font-family:'IM Fell English',serif;font-style:italic;font-size:.75rem;cursor:pointer;white-space:nowrap">🪶 poetry</div>
@@ -724,7 +743,7 @@
     <!-- Search + add -->
     <div style="display:flex;gap:8px;padding:10px 18px;flex-shrink:0">
       <input class="sq-input" id="lib-search" placeholder="search title, author, or genre..." oninput="renderBookList()" style="margin:0;flex:1">
-      <button class="wp-add-toggle" onclick="toggleAddStory()">+ add</button>
+      <button class="wp-add-toggle" id="lib-add-btn" onclick="toggleAddStory()" style="display:none">+ add</button>
     </div>
     <!-- Add story panel -->
     <div id="lib-add-panel" style="display:none;margin:0 18px 12px;background:rgba(20,15,10,.55);border:1px solid rgba(200,137,42,.18);border-radius:12px;padding:12px;flex-shrink:0;max-height:50vh;overflow-y:auto">
@@ -827,7 +846,7 @@
 <!-- v01.24: personal playlist — "your own Spotify corner" -->
 <div id="playlist-panel" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
   width:300px;max-height:70vh;background:rgba(10,8,6,.98);border:1px solid rgba(200,137,42,.3);
-  border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,.7);z-index:110;display:flex;flex-direction:column;overflow:hidden">
+  border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,.7);z-index:110;flex-direction:column;overflow:hidden">
   <div style="padding:14px;border-bottom:1px solid rgba(200,137,42,.15);display:flex;justify-content:space-between;align-items:center">
     <div class="modal-title" style="margin:0">🎵 your playlist</div>
     <button onclick="closePlaylistPanel()" style="background:none;border:none;color:var(--amber);font-size:1.2rem;cursor:pointer">✕</button>

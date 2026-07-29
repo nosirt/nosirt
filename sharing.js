@@ -1,4 +1,22 @@
 /* ============================================================
+   SHARING.JS — v01.26
+   Added sendSharedCardToChat() — called directly from wireless.js
+   and keep.js share buttons to post a card into global chat.
+   ============================================================ */
+
+// Called when a user hits a "share to chat" button anywhere on the site.
+// Sends the card directly to global chat (same as the share picker flow
+// but without the picker UI step).
+function sendSharedCardToChat(card){
+  if(typeof sendSharedCard==='function'){
+    sendSharedCard(card, {type:'global'});
+    toast('shared to chat ✓');
+  } else {
+    toast('chat not ready');
+  }
+}
+
+/* ============================================================
    SHARING.JS — v01.24 final slice: share playlist items, recs board
    entries, and forum (n/) posts into chat — global or DM — with a
    clean "save" on the recipient's side.

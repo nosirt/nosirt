@@ -380,7 +380,8 @@ function renderEpisodes(){
         ${pct>0?`<div class="wp-ep-progress"><div class="wp-ep-progress-fill" style="width:${pct}%"></div></div>`:''}
       </div>
       ${!S.selectMode?`<button class="playlist-add-btn" style="margin-left:6px" onclick="event.stopPropagation();addToPlaylist({type:'episode',showTitle:${JSON.stringify(getCurrentShowTitle())},episodeTitle:${JSON.stringify(ep.title)}})" title="save to your playlist">+</button>`:''}
-      <div class="wp-ep-admin ${S.adminUnlocked&&!S.selectMode?'show':''}">
+      ${!S.selectMode?`<button class="playlist-add-btn" style="margin-left:4px;font-size:.65rem" onclick="event.stopPropagation();shareEpisodeToChat(${JSON.stringify(ep)})" title="share to chat">📎</button>`:''}
+      <div class="wp-ep-admin ${(S.adminUnlocked||isCurrentShowMine())&&!S.selectMode?'show':''}">
         <button class="wp-ep-btn" onclick="moveEpisode(event,'${ep.id}',-1)" title="move up" ${globalIdx<=0?'disabled':''}>↑</button>
         <button class="wp-ep-btn" onclick="moveEpisode(event,'${ep.id}',1)" title="move down" ${globalIdx>=full.length-1?'disabled':''}>↓</button>
         <button class="wp-ep-btn edit" onclick="editEpisode(event,'${ep.id}')" title="edit">✎</button>
@@ -1123,6 +1124,14 @@ function showWirelessHome(){
   if(showView)showView.style.display='none';
   if(home)home.style.display='block';
   renderShowGrid();
+  updateWirelessToolbar();
+}
+
+function updateWirelessToolbar(){
+  const adminBtn=$('btn-new-show-admin');
+  const userBtn=$('btn-new-show-user');
+  if(adminBtn) adminBtn.style.display = S.adminUnlocked ? 'inline-flex' : 'none';
+  if(userBtn)  userBtn.style.display  = (!S.adminUnlocked && S.account) ? 'inline-flex' : 'none';
 }
 
 function setActiveShow(showId,opts){
@@ -1168,35 +1177,139 @@ function getPixieShowEpisodes(){
   return (S.showEpisodesAll||[]).filter(e=>e.showId===show.id).sort((a,b)=>(a.order||0)-(b.order||0));
 }
 
+// v01.26: show ownership and sharing helpers
+
+// Opens show creation form for non-admin logged-in users
+function openUserShowForm(){
+  if(!S.account){ toast('sign in to create a playlist'); return; }
+  openShowForm(null);
+}
+
+function isCurrentShowMine(){
+  const show=(S.shows||[]).find(s=>s.id===S.currentShowId);
+  if(!show) return false;
+  return showIsOwnedByMe(show);
+}
+
+// Share an episode as a card into global chat
+function shareEpisodeToChat(ep){
+  if(!S.account){ toast('sign in to share'); return; }
+  const show=(S.shows||[]).find(s=>s.id===ep.showId);
+  const card={
+    type:'episode',
+    showTitle: show?show.title:'',
+    episodeTitle: ep.title,
+    desc: ep.desc||'',
+    sharedBy: S.account.username,
+    sharedAt: Date.now()
+  };
+  if(typeof sendSharedCardToChat==='function') sendSharedCardToChat(card);
+  else toast('share sent to chat');
+}
+
+// Share an entire show as a card into global chat
+function shareShowToChat(showId){
+  if(!S.account){ toast('sign in to share'); return; }
+  const show=(S.shows||[]).find(s=>s.id===showId);
+  if(!show){ toast('show not found'); return; }
+  const eps=(S.showEpisodesAll||[]).filter(e=>e.showId===showId);
+  const card={
+    type:'show',
+    showId: show.id,
+    showTitle: show.title,
+    description: show.description||'',
+    episodeCount: eps.length,
+    sharedBy: S.account.username,
+    sharedAt: Date.now()
+  };
+  if(typeof sendSharedCardToChat==='function') sendSharedCardToChat(card);
+  else toast('share sent to chat');
+}
+
+// Toggle a user-owned show between public and private
+async function toggleShowPublic(showId){
+  if(!S.account){ toast('sign in to change visibility'); return; }
+  const show=(S.shows||[]).find(s=>s.id===showId);
+  if(!show || !showIsOwnedByMe(show)){ toast('not your show'); return; }
+  const newPublic = !show.isPublic;
+  const res = await callAccountUpdate({
+    action:'toggleShowPublic', username:S.account.username,
+    token:S.account.token, showId, isPublic:newPublic
+  });
+  if(!res.ok){ toast(res.error||"couldn't update"); return; }
+  toast(newPublic ? 'show is now public 🌿' : 'show is now private 🔒');
+  // Local update while Firestore listener catches up
+  show.isPublic = newPublic;
+  renderShowGrid();
+  renderShowBanner();
+}
+
+// v01.26: show ownership helpers
+function showIsVisibleToUser(s){
+  if((s.title||'').trim().toLowerCase()==='pixie' && !S.adminUnlocked) return false;
+  if(S.adminUnlocked) return true;
+  if(s.isPublic) return true;
+  if(S.account && s.owner === S.account.username) return true;
+  return false;
+}
+function showIsOwnedByMe(s){
+  if(S.adminUnlocked && !s.owner) return true; // legacy admin shows
+  if(S.adminUnlocked && s.owner === 'admin') return true;
+  if(S.account && s.owner === S.account.username) return true;
+  return false;
+}
+
 function renderShowGrid(){
   const grid=$('wp-show-grid'),empty=$('wp-show-grid-empty');
   if(!grid)return;
   const q=($('wp-home-search')?$('wp-home-search').value:'').trim().toLowerCase();
-  // v01.18: the reserved "pixie" show (her shorts source) never shows
-  // up in the public grid — only visible here when admin is unlocked,
-  // so it can still be managed through the normal show-edit UI.
-  const shows=(S.shows||[]).filter(s=>{
-    if((s.title||'').trim().toLowerCase()==='pixie' && !S.adminUnlocked) return false;
+
+  const allVisible=(S.shows||[]).filter(s=>{
+    if(!showIsVisibleToUser(s)) return false;
     return !q||s.title.toLowerCase().includes(q)||(s.description||'').toLowerCase().includes(q);
   });
-  if(!shows.length){
+
+  // Split: public shows (for the Netflix grid) vs my private shows
+  const myUsername = S.account ? S.account.username : null;
+  const publicShows = allVisible.filter(s=>s.isPublic || S.adminUnlocked);
+  const myPrivate  = allVisible.filter(s=>!s.isPublic && showIsOwnedByMe(s));
+
+  function makeCard(s, isPrivate){
+    const eps=(S.showEpisodesAll||[]).filter(e=>e.showId===s.id).sort((a,b)=>(a.order||0)-(b.order||0));
+    const cover=showCoverStyle(s,eps);
+    const shortDesc=(s.description||'').slice(0,80);
+    const privBadge = isPrivate
+      ? '<div style="font-size:.58rem;color:var(--amber);opacity:.7;margin-top:2px">🔒 private</div>'
+      : (s.owner && s.owner!=='admin' ? '<div style="font-size:.58rem;color:var(--fog);opacity:.5;margin-top:2px">by '+esc(s.owner)+'</div>' : '');
+    return '<div class="wp-show-card" onclick="openShow(\''+s.id+'\')">'+
+      '<div class="wp-show-cover" style="'+cover.style+'">'+(cover.label||'')+'</div>'+
+      '<div class="wp-show-card-title">'+esc(s.title)+'</div>'+
+      '<div class="wp-show-card-desc">'+esc(shortDesc)+((s.description||'').length>80?'…':'')+'</div>'+
+      '<div class="wp-show-card-count">'+eps.length+' video'+(eps.length===1?'':'s')+'</div>'+
+      privBadge+
+      '</div>';
+  }
+
+  // My private section (only shown when logged in and has private shows)
+  const myPrivateHtml = myPrivate.length
+    ? '<div style="margin-bottom:6px;font-size:.68rem;color:var(--fog);opacity:.6;font-family:\"IM Fell English\",serif;font-style:italic">— your private library —</div>'+
+      '<div class="wp-show-grid" style="margin-bottom:20px">'+myPrivate.map(s=>makeCard(s,true)).join('')+'</div>'
+    : '';
+
+  if(!publicShows.length && !myPrivate.length){
     grid.innerHTML='';
+    if(myPrivateHtml) grid.innerHTML = myPrivateHtml;
     empty.style.display='block';
     empty.textContent=q?'no shows match that search.':'no shows yet.';
     return;
   }
   empty.style.display='none';
-  grid.innerHTML=shows.map(s=>{
-    const eps=(S.showEpisodesAll||[]).filter(e=>e.showId===s.id).sort((a,b)=>(a.order||0)-(b.order||0));
-    const cover=showCoverStyle(s,eps);
-    const shortDesc=(s.description||'').slice(0,80);
-    return `<div class="wp-show-card" onclick="openShow('${s.id}')">
-      <div class="wp-show-cover" style="${cover.style}">${cover.label||''}</div>
-      <div class="wp-show-card-title">${esc(s.title)}</div>
-      <div class="wp-show-card-desc">${esc(shortDesc)}${(s.description||'').length>80?'…':''}</div>
-      <div class="wp-show-card-count">${eps.length} video${eps.length===1?'':'s'}</div>
-    </div>`;
-  }).join('');
+
+  const publicHtml = publicShows.length
+    ? publicShows.map(s=>makeCard(s,false)).join('')
+    : (myPrivate.length ? '' : '<div style="padding:20px;text-align:center;font-size:.78rem;color:var(--fog);opacity:.5;font-family:\"IM Fell English\",serif;font-style:italic">no public shows yet.</div>');
+
+  grid.innerHTML = myPrivateHtml + publicHtml;
 }
 
 // ── show banner + description editing ──
@@ -1207,9 +1320,27 @@ function renderShowBanner(){
   const eps=(S.showEpisodesAll||[]).filter(e=>e.showId===show.id);
   const cover=showCoverStyle(show,eps);
   bannerEl.style.cssText=cover.style;
-  bannerEl.innerHTML=`<div class="wp-show-banner-overlay"><div class="wp-show-banner-title">${esc(show.title)}</div></div>`;
+  const mine = showIsOwnedByMe(show);
+  const privacyBadge = mine
+    ? (show.isPublic
+        ? '<span style="font-size:.6rem;color:#8fc97a;opacity:.9;margin-left:8px">🌿 public</span>'
+        : '<span style="font-size:.6rem;color:var(--amber);opacity:.7;margin-left:8px">🔒 private</span>')
+    : (show.owner ? '<span style="font-size:.6rem;color:var(--fog);opacity:.5;margin-left:8px">by '+esc(show.owner)+'</span>' : '');
+  bannerEl.innerHTML='<div class="wp-show-banner-overlay"><div class="wp-show-banner-title">'+esc(show.title)+privacyBadge+'</div></div>';
   const descText=$('wp-show-desc-text');
   if(descText)descText.textContent=show.description||'';
+  // Show admin row: admin OR owner sees edit controls; anyone sees share
+  const adminRow=$('wp-show-admin-row');
+  if(adminRow){
+    const shareBtn='<button class="wcal-mini-btn" onclick="shareShowToChat(\''+show.id+'\')">📎 share to chat</button>';
+    const ownerBtns = mine
+      ? '<button class="wcal-mini-btn" onclick="openShowForm(currentShowIdSafe())">✎ edit show</button>'+
+        '<button class="wcal-mini-btn danger" onclick="confirmDeleteShow()">🗑 delete</button>'+
+        '<button class="wcal-mini-btn" onclick="toggleShowPublic(\''+show.id+'\')">'+(show.isPublic?'🔒 make private':'🌿 make public')+'</button>'
+      : '';
+    adminRow.innerHTML = shareBtn + ownerBtns;
+    adminRow.style.display = 'flex';
+  }
 }
 
 function startShowDescriptionEdit(){
@@ -1242,7 +1373,13 @@ let wcalCoverType='youtube';
 let wpEditingShowId=null;
 
 function openShowForm(showId){
-  if(!S.adminUnlocked){toast('admin access required');return;}
+  // v01.26: owner of a show can also edit it (not just admin)
+  if(showId){
+    const show=(S.shows||[]).find(s=>s.id===showId);
+    if(show && !S.adminUnlocked && !showIsOwnedByMe(show)){toast('not your show');return;}
+  } else {
+    if(!S.adminUnlocked){toast('admin access required');return;}
+  }
   wpEditingShowId=showId;
   const show=showId?(S.shows||[]).find(s=>s.id===showId):null;
   $('wp-show-form-title').textContent=show?'edit show':'new show';
@@ -1286,12 +1423,28 @@ function saveShowForm(){
   const makeDefault=$('wp-show-default-check').checked;
   const existing=(S.shows||[]).find(s=>s.id===id);
   const order=isNew?((S.shows||[]).length):(existing?existing.order:0);
+  // v01.26: tag with owner; preserve existing isPublic unless admin
+  const owner = S.account ? S.account.username : 'admin';
+  const existingPublic = existing ? !!existing.isPublic : false;
+  // Admin can set isPublic via the toggle in the banner; here default to preserving it
+  const isPublic = S.adminUnlocked ? existingPublic : (existing ? existingPublic : false);
   const data={id,title,description,coverType:wcalCoverType,coverUrl,colorHex,order,
-    isDefault:makeDefault,createdAt:isNew?Date.now():(existing?existing.createdAt:Date.now())};
+    isDefault:makeDefault,createdAt:isNew?Date.now():(existing?existing.createdAt:Date.now()),
+    owner, isPublic};
   try{
     if(makeDefault){
       const prevDefault=(S.shows||[]).find(s=>s.isDefault&&s.id!==id);
       if(prevDefault)fbSaveShow(prevDefault.id,{isDefault:false},true);
+    }
+    if(S.account && !S.adminUnlocked){
+      // Route through account-update for non-admin users (enforces ownership server-side)
+      callAccountUpdate({action:'saveUserShow',username:S.account.username,token:S.account.token,show:data}).then(res=>{
+        if(!res.ok){toast(res.error||"couldn't save");return;}
+        toast(isNew?'playlist created':'playlist updated');
+        closeShowForm();
+        if(isNew)setTimeout(()=>openShow(id),300);
+      });
+      return;
     }
     fbSaveShow(id,data);
     toast(isNew?'show created':'show updated');
@@ -1305,7 +1458,7 @@ function saveShowForm(){
 
 // ── delete show ──
 function confirmDeleteShow(){
-  if(!S.adminUnlocked)return;
+  if(!S.adminUnlocked && !isCurrentShowMine()){toast('not your show');return;}
   const show=(S.shows||[]).find(s=>s.id===S.currentShowId);
   if(!show)return;
   const eps=(S.showEpisodesAll||[]).filter(e=>e.showId===show.id);

@@ -26,6 +26,38 @@ const PRESENCE_STALE_MS = 5 * 60 * 1000; // prune very old docs from Firestore
 let presenceTimer = null;
 let onlineListOpen = false;
 
+// v01.26: hidden mode — user can toggle their own presence visibility.
+// hidden=true → still heartbeating (so we can un-hide ourselves), but
+// filtered out of the list for other visitors. Admin always sees everyone.
+let presenceHidden = false;
+function togglePresenceHidden(){
+  presenceHidden = !presenceHidden;
+  localStorage.setItem('n_presence_hidden', presenceHidden ? '1' : '0');
+  // Write immediately so the change propagates within the heartbeat window
+  fbSavePresence(S.userId, {
+    id:S.userId, num:getChatNum(),
+    displayName:getDisplayLabel(), avatarEmoji:getDisplayAvatar(),
+    accountUsername:(S.account?S.account.username:null),
+    ts:Date.now(), hidden:presenceHidden
+  });
+  renderOnlineCount();
+  renderMyPresenceDot();
+  if(onlineListOpen) renderOnlineList();
+  toast(presenceHidden ? 'you are now hidden from others' : 'you are now visible');
+}
+function renderMyPresenceDot(){
+  const btn = $('chat-online-btn');
+  if(!btn) return;
+  const count = getOnlineUsers().length + 1; // +1 for Pixie
+  if(presenceHidden){
+    btn.innerHTML = '🔴 <span id="chat-online-count">'+count+'</span> online <span style="font-size:.6em;opacity:.6">(hidden)</span>';
+  } else {
+    btn.innerHTML = '🟢 <span id="chat-online-count">'+count+'</span> online';
+  }
+}
+// Restore hidden preference from localStorage on load
+(function(){ presenceHidden = localStorage.getItem('n_presence_hidden')==='1'; })();
+
 // ═══ Live sync hooks (called from map-layout.js enterSite) ═══
 
 function onChatSettingsUpdate(data){
@@ -52,7 +84,12 @@ function onPresenceUpdate(items){
 // enterSite() in map-layout.js.
 function startPresenceHeartbeat(){
   const beat = ()=>{
-    fbSavePresence(S.userId, { id:S.userId, num:getChatNum(), displayName:getDisplayLabel(), avatarEmoji:getDisplayAvatar(), ts:Date.now() });
+    fbSavePresence(S.userId, {
+      id:S.userId, num:getChatNum(),
+      displayName:getDisplayLabel(), avatarEmoji:getDisplayAvatar(),
+      accountUsername:(S.account?S.account.username:null),
+      ts:Date.now(), hidden:presenceHidden
+    });
     // Occasional lazy prune of very stale presence docs (any client can
     // do this safely — deletes are idempotent).
     (S.onlinePresence||[]).forEach(p=>{
@@ -71,18 +108,30 @@ function startPresenceHeartbeat(){
 
 function getOnlineUsers(){
   const cutoff = Date.now() - ONLINE_THRESHOLD_MS;
+  const myId = S.userId;
   const seen = {};
   (S.onlinePresence||[]).forEach(p=>{
-    if(p.ts >= cutoff) seen[p.num] = p; // dedupe by display num just in case
+    if(p.ts < cutoff) return; // expired
+    // Hidden users: visible only to themselves and admin
+    if(p.hidden && p.id !== myId && !S.adminUnlocked) return;
+    seen[p.num] = p;
+  });
+  return Object.values(seen).sort((a,b)=>a.ts-b.ts);
+}
+
+// Admin-only: get ALL users including hidden, for the full status list
+function getAllOnlineUsers(){
+  const cutoff = Date.now() - ONLINE_THRESHOLD_MS;
+  const seen = {};
+  (S.onlinePresence||[]).forEach(p=>{
+    if(p.ts >= cutoff) seen[p.num] = p;
   });
   return Object.values(seen).sort((a,b)=>a.ts-b.ts);
 }
 
 function renderOnlineCount(){
-  const el = $('chat-online-count');
-  if(!el) return;
-  // +1 for Pixie, who is always online
-  el.textContent = getOnlineUsers().length + 1;
+  // Delegate to renderMyPresenceDot which handles the dot color + count together
+  renderMyPresenceDot();
 }
 
 function toggleOnlineList(){
@@ -96,25 +145,89 @@ function toggleOnlineList(){
 function renderOnlineList(){
   const el = $('chat-online-list');
   if(!el) return;
-  const users = getOnlineUsers();
   const myNum = getChatNum();
-  // v01.25: Pixie is always shown first — clicking her opens the DM thread.
-  const pixieRow = `<div class="online-user-row" onclick="openPixieDmFromOnlineList()" style="cursor:pointer;color:var(--amber)" title="chat with Pixie">🟢 🧚 <span style="text-decoration:underline;text-underline-offset:2px">Pixie</span> <span style="opacity:.5;font-size:.65em">fairy companion</span></div>`;
-  if(!users.length){
+  const myId  = S.userId;
+
+  // Admin sees ALL users (including hidden) grouped by status.
+  // Everyone else sees only visible users.
+  const isAdmin = S.adminUnlocked;
+  const users = isAdmin ? getAllOnlineUsers() : getOnlineUsers();
+
+  // Pixie — always first, always clickable
+  const pixieRow = '<div class="online-user-row" onclick="openPixieDmFromOnlineList()" style="cursor:pointer;color:var(--amber)" title="chat with Pixie">' +
+    '🟢 🧚 <span style="text-decoration:underline;text-underline-offset:2px">Pixie</span>' +
+    ' <span style="opacity:.5;font-size:.65em">fairy companion</span></div>';
+
+  // My own row — always shows, has a toggle to hide/show presence
+  const myPresence = users.find(u=>u.id===myId);
+  const myLabel = myPresence ? (myPresence.displayName||('user('+myNum+')')) : null;
+  const myAvatar = myPresence ? (myPresence.avatarEmoji||'') : '';
+  const myHiddenRow = myLabel ? (
+    '<div class="online-user-row" onclick="togglePresenceHidden()" style="cursor:pointer;opacity:.9" title="click to toggle your visibility">' +
+    (presenceHidden ? '🔴' : '🟢') + ' ' + esc(myAvatar) + (myAvatar?' ':'') + esc(myLabel) +
+    ' <span class="online-you">(you · click to ' + (presenceHidden?'show':'hide') + ')</span>' +
+    '</div>'
+  ) : '';
+
+  // Other users
+  const others = users.filter(u=>u.id!==myId);
+
+  if(!others.length && !myLabel){
     el.innerHTML = pixieRow;
     return;
   }
-  el.innerHTML = pixieRow + users.map(u=>{
-    const label = u.displayName || ('user('+u.num+')');
-    const avatar = u.avatarEmoji ? esc(u.avatarEmoji)+' ' : '';
-    return `<div class="online-user-row">🟢 ${avatar}${esc(label)}${u.num===myNum?' <span class="online-you">(you)</span>':''}</div>`;
-  }).join('');
+
+  // Admin groups: online (green) then hidden (red)
+  let othersHtml = '';
+  if(isAdmin){
+    const visible = others.filter(u=>!u.hidden);
+    const hidden  = others.filter(u=>u.hidden);
+    const renderRow = (u, dot) => {
+      const label = u.displayName||('user('+u.num+')');
+      const avatar = u.avatarEmoji ? esc(u.avatarEmoji)+' ' : '';
+      const clickable = u.accountUsername;
+      const onclickAttr = clickable
+        ? 'onclick="onlineListClickUser(\'' + esc(u.accountUsername) + '\',\'' + esc(label) + '\')"'
+        : '';
+      const underline = clickable ? 'text-decoration:underline;text-underline-offset:2px' : '';
+      return '<div class="online-user-row" ' + onclickAttr + ' style="cursor:' + (clickable?'pointer':'default') + ';">' +
+        dot + ' <span style="' + underline + '">' + avatar + esc(label) + '</span>' +
+        (u.hidden ? ' <span style="font-size:.6em;opacity:.5">(hidden)</span>' : '') + '</div>';
+    };
+    if(hidden.length){
+      othersHtml += '<div style="font-size:.6rem;color:var(--fog);opacity:.4;padding:4px 10px 2px;font-style:italic">— hidden —</div>';
+      othersHtml += hidden.map(u=>renderRow(u,'🔴')).join('');
+      if(visible.length) othersHtml += '<div style="font-size:.6rem;color:var(--fog);opacity:.4;padding:4px 10px 2px;font-style:italic">— online —</div>';
+    }
+    othersHtml += visible.map(u=>renderRow(u,'🟢')).join('');
+  } else {
+    othersHtml = others.map(u=>{
+      const label = u.displayName||('user('+u.num+')');
+      const avatar = u.avatarEmoji ? esc(u.avatarEmoji)+' ' : '';
+      const clickable = u.accountUsername;
+      const onclickAttr = clickable
+        ? 'onclick="onlineListClickUser(\'' + esc(u.accountUsername) + '\',\'' + esc(label) + '\')"'
+        : '';
+      const underline = clickable ? 'text-decoration:underline;text-underline-offset:2px' : '';
+      return '<div class="online-user-row" ' + onclickAttr + ' style="cursor:' + (clickable?'pointer':'default') + ';">' +
+        '🟢 <span style="' + underline + '">' + avatar + esc(label) + '</span></div>';
+    }).join('');
+  }
+  el.innerHTML = pixieRow + myHiddenRow + othersHtml;
 }
 
 function openPixieDmFromOnlineList(){
-  toggleOnlineList(); // close the online panel
+  toggleOnlineList();
   switchChatTab('personal');
   if(typeof openPixieDm==='function') openPixieDm();
+}
+
+// Called when any real user in the online list is clicked
+function onlineListClickUser(username, displayName){
+  if(!S.account){ toast('sign in to send a DM'); return; }
+  toggleOnlineList(); // close the online panel
+  switchChatTab('personal');
+  if(typeof openDmThread==='function') openDmThread(username);
 }
 
 // ═══ Panel open/close/tabs ═══
@@ -122,6 +235,7 @@ function openPixieDmFromOnlineList(){
 function openChatPanel(){
   $('chat-panel').classList.add('open');
   switchChatTab('global');
+  renderMyPresenceDot(); // ensure dot colour is correct on open
 }
 function closeChatPanel(){
   $('chat-panel').classList.remove('open');

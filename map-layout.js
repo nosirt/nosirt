@@ -570,23 +570,42 @@ function exitMoodWorld(){
 // ═══ MUSIC ═══
 function playForView(view){} // no-op — music is manual now
 
+// v01.25: on the very first autoplay of a session, start silent and
+// ramp up to normal volume over 5 seconds so visitors aren't blasted.
+// After that first ramp the flag is set and subsequent track switches
+// play at normal volume immediately.
+let _audioFadeInDone = false;
+function _doFirstVisitFadeIn(audioEl){
+  if(_audioFadeInDone) return;
+  _audioFadeInDone = true;
+  audioEl.volume = 0;
+  const start = Date.now();
+  const RAMP_MS = 5000;
+  const TARGET = 1.0; // tryPlay always sets to 1.0; envVolume is handled by weatherAudio separately
+  const tick = () => {
+    const elapsed = Date.now() - start;
+    if(elapsed >= RAMP_MS){ audioEl.volume = TARGET; return; }
+    audioEl.volume = TARGET * (elapsed / RAMP_MS);
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
 function tryPlay(src,name){
   stopSynthMusic();
   const a=$('audio-player');
   if(a.src!==src){a.src=src;a.load();}
   a.onerror=()=>{
-    if(activeMusic==='podcast'||a.src!==src||!a.getAttribute('src'))return; // stale/irrelevant error, ignore
+    if(activeMusic==='podcast'||a.src!==src||!a.getAttribute('src'))return;
     updateNP('stream failed · try built-in ancient');toast('that stream would not open here');
   };
-  a.play().then(()=>toast('sound started')).catch(()=>{
+  a.play().then(()=>{
+    _doFirstVisitFadeIn(a);
+    toast('sound started');
+  }).catch(()=>{
     updateNP('tap anywhere to start sound');
-    // v01.10: browser blocked autoplay (no user-gesture in this call's
-    // history — most commonly because the welcome banner was toggled
-    // off, so there was no tap to "unlock" audio). Retry automatically
-    // the moment the visitor interacts with the page at all, rather
-    // than requiring them to specifically reopen the music menu.
     const retryPlay=()=>{
-      a.play().then(()=>{ toast('sound started'); updateNP(name); }).catch(()=>{});
+      a.play().then(()=>{ _doFirstVisitFadeIn(a); toast('sound started'); updateNP(name); }).catch(()=>{});
       document.removeEventListener('click',retryPlay);
       document.removeEventListener('touchstart',retryPlay);
       document.removeEventListener('keydown',retryPlay);
@@ -605,7 +624,11 @@ function startAncientSynth(){
   stopSynthMusic();
   const ac=new AC();
   const master=ac.createGain();master.gain.value=.0001;master.connect(ac.destination);
-  master.gain.exponentialRampToValueAtTime(.18,ac.currentTime+1.8);
+  // v01.25: first-visit ramp — start near-silent for 5s, then settle at .18
+  const synthTarget = .18;
+  const synthRampEnd = _audioFadeInDone ? ac.currentTime+1.8 : ac.currentTime+5.0;
+  master.gain.exponentialRampToValueAtTime(synthTarget, synthRampEnd);
+  _audioFadeInDone = true; // mark done so any subsequent track plays normally
   const delay=ac.createDelay(2.5);delay.delayTime.value=.42;
   const fb=ac.createGain();fb.gain.value=.26;
   delay.connect(fb);fb.connect(delay);delay.connect(master);
@@ -915,7 +938,7 @@ function drawMapCanvas(){
   mMapLabel(ctx,980,1320,'the garden');
   mMapLabel(ctx,1560,1934,'town square');
   mMapLabel(ctx,2280,1160,'the tower');
-  mMapLabel(ctx,1960,742,"nosirt's keep");
+  mMapLabel(ctx,1960,742,(typeof getKeepTitle==='function'?getKeepTitle():"nosirt's keep"));
   mMapLabel(ctx,840,1712,'the wireless');
 
   // ISLANDS
@@ -1794,6 +1817,16 @@ async function saveBioEdit() {
   }
 }
 
+// Toggle the admin section disclosure (so regular users don't see admin fields)
+function toggleAdminSection(){
+  const body = $('admin-section-body');
+  const btn  = $('admin-toggle-btn');
+  if(!body) return;
+  const open = body.style.display === 'none';
+  body.style.display = open ? 'block' : 'none';
+  if(btn) btn.textContent = open ? 'admin ▴' : 'admin ▾';
+}
+
 async function handleAdminLoginProfile() {
   const username = $('admin-username-profile').value.trim();
   const password = $('admin-password-profile').value.trim();
@@ -1808,6 +1841,11 @@ async function handleAdminLoginProfile() {
     $('admin-password-profile').value = '';
     $('admin-login-form-profile').style.display = 'none';
     $('admin-unlocked-view-profile').style.display = 'block';
+    // Keep section expanded so admin sees their controls
+    const body = $('admin-section-body');
+    if(body) body.style.display = 'block';
+    const btn = $('admin-toggle-btn');
+    if(btn) btn.textContent = 'admin ▴';
     $('profile-bio-edit-btn').style.display = 'block';
     loadChangelogIfAdmin();
     renderFeatureToggleList();
@@ -1817,8 +1855,14 @@ async function handleAdminLoginProfile() {
     updateAdminUI();
     renderEpisodes(); // refresh so wp-ep-admin edit/delete buttons show immediately
     if(typeof renderShowGrid==='function')renderShowGrid();
+    if(typeof updateWirelessToolbar==='function')updateWirelessToolbar();
     if(typeof renderComments==='function')renderComments();
     if(typeof loadClaimNamesForAdmin==='function')loadClaimNamesForAdmin(); // reveal booking names now that admin is unlocked
+    if(typeof updateKeepTitles==='function')updateKeepTitles();
+    if(typeof initKeepTabs==='function')initKeepTabs();
+    // v01.26: re-render presence list so admin immediately sees hidden users
+    if(typeof renderOnlineList==='function')renderOnlineList();
+    if(typeof renderOnlineCount==='function')renderOnlineCount();
   } else {
     errorDiv.textContent = 'wrong username or password';
   }
@@ -1830,6 +1874,11 @@ function handleAdminLogoutProfile() {
   $('admin-password-profile').value = '';
   $('admin-unlocked-view-profile').style.display = 'none';
   $('admin-login-form-profile').style.display = 'flex';
+  // Collapse the admin section again after logout
+  const body = $('admin-section-body');
+  if(body) body.style.display = 'none';
+  const btn = $('admin-toggle-btn');
+  if(btn) btn.textContent = 'admin ▾';
   $('profile-bio-edit-btn').style.display = 'none';
   $('profile-changelog').style.display = 'none';
   cancelBioEdit();
@@ -1842,6 +1891,9 @@ function handleAdminLogoutProfile() {
   if($('wcal-admin-panel'))$('wcal-admin-panel').classList.remove('show');
   if(typeof closeAdminSettingsPanel==='function')closeAdminSettingsPanel();
   if(typeof renderShowGrid==='function')renderShowGrid();
+  if(typeof updateWirelessToolbar==='function')updateWirelessToolbar();
+  if(typeof updateKeepTitles==='function')updateKeepTitles();
+  if(typeof initKeepTabs==='function')initKeepTabs();
   if(typeof renderComments==='function')renderComments();
   if(typeof cancelShowDescriptionEdit==='function')cancelShowDescriptionEdit();
   if(typeof closeShowForm==='function')closeShowForm();
